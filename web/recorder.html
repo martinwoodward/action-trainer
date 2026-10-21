@@ -177,8 +177,8 @@ function render() {
       $("big").textContent = `${rec.flights} / ${rec.takes} flights`;
     }
     $("bigsub").textContent = `Recording ${rec.label} · ${rec.samples} samples · ${rec.marks} marks`;
-  } else if (status.connecting) {
-    $("big").textContent = "…"; $("bigsub").textContent = "Connecting";
+  } else if (status.connecting || status.reconnecting) {
+    $("big").textContent = "…"; $("bigsub").textContent = status.connecting ? "Connecting" : "Reconnecting to badge…";
   } else if (p) {
     $("big").textContent = "Review";
     $("bigsub").textContent = "Save or discard the recording below.";

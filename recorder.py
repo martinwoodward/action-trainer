@@ -28,9 +28,11 @@ from protocol import (
     CMD_MODEL_DATA,
     CMD_MODEL_END,
     CMD_NAME,
+    CMD_PING,
     COMPANY_ID,
     CONTROL_MAX,
     INFO_UUID,
+    PING_INTERVAL_MS,
     STREAM_UUID,
     CONTROL_UUID,
     model_checksum,
@@ -64,6 +66,7 @@ class Recorder:
         self.sockets = set()
         self.client = None
         self.address = None
+        self.target = None  # badge to stay connected to; cleared by an explicit disconnect
         self.info = ""
         self.connecting = False
         self.last_seq = None
@@ -101,32 +104,57 @@ class Recorder:
         dev = self.devices.get(address)
         if dev is None:
             raise RuntimeError("badge not seen yet")
+        self.target = address
         self.connecting = True
         await self.broadcast_status()
+        client = BleakClient(dev, timeout=10, disconnected_callback=self.on_disconnect)
         try:
-            client = BleakClient(dev, timeout=20, disconnected_callback=self.on_disconnect)
             await client.connect()
-            self.client = client
-            self.address = address
             self.last_seq = None
             self.lost = 0
             self.t_last16 = None
             self.info = (await client.read_gatt_char(INFO_UUID)).decode(errors="replace")
             await client.start_notify(STREAM_UUID, self.on_stream)
+            self.client = client
+            self.address = address
+        except Exception as e:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            raise RuntimeError("couldn't reach the badge, retrying") from e
         finally:
             self.connecting = False
-        await self.broadcast_status()
+            await self.broadcast_status()
 
-    def on_disconnect(self, _client):
-        self.loop.call_soon_threadsafe(self._handle_disconnect)
+    async def reconnect(self):
+        try:
+            await self.connect(self.target)
+        except Exception as e:
+            print("reconnect failed:", e.__cause__ or e)
 
-    def _handle_disconnect(self):
+    def on_disconnect(self, client):
+        self.loop.call_soon_threadsafe(self._handle_disconnect, client)
+
+    def _handle_disconnect(self, client=None):
+        if client is not None and client is not self.client:
+            return
         self.client = None
         if self.recording is not None:
             self.finish_recording(reason="disconnected")
         self.loop.create_task(self.broadcast_status())
 
+    async def drop_link(self):
+        client = self.client
+        self._handle_disconnect()
+        if client is not None:
+            try:
+                await asyncio.wait_for(client.disconnect(), 5)
+            except Exception:
+                pass
+
     async def disconnect(self):
+        self.target = None
         client = self.client
         if client is not None:
             try:
@@ -324,6 +352,7 @@ class Recorder:
             ),
             "connected": self.address if self.client is not None else None,
             "connecting": self.connecting,
+            "reconnecting": self.target if self.client is None else None,
             "info": self.info,
             "lost": self.lost,
             "recording": None
@@ -356,11 +385,33 @@ class Recorder:
     async def broadcast_status(self):
         await self.broadcast(self.status())
 
+    async def keep_alive(self):
+        if self.client is not None:
+            try:
+                await self.write_control(CMD_PING)
+                self.ping_failures = 0
+            except Exception:
+                self.ping_failures += 1
+                if self.ping_failures >= 2:
+                    print("badge stopped answering, dropping link")
+                    await self.drop_link()
+        elif self.target and not self.connecting:
+            b = self.badges.get(self.target)
+            if b and time.time() - b["seen"] < 5:
+                await self.reconnect()
+
     async def pump(self):
         last_status = 0
         last_prompt = None
+        last_ping = 0
+        self.ping_failures = 0
+        alive = None
         while True:
             await asyncio.sleep(0.05)
+            now = time.time()
+            if (alive is None or alive.done()) and now - last_ping >= PING_INTERVAL_MS / 1000:
+                last_ping = now
+                alive = asyncio.create_task(self.keep_alive())
             if self.live:
                 batch, self.live = self.live, []
                 await self.broadcast({"type": "samples", "data": batch})
