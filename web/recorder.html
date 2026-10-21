@@ -69,6 +69,13 @@
       </div>
     </section>
     <section>
+      <h2>Model</h2>
+      <div class="row" style="align-items:center">
+        <button id="traindeploy" class="primary">Train &amp; deploy</button>
+        <span id="modelstatus" style="color:var(--dim);font-size:13px"></span>
+      </div>
+    </section>
+    <section>
       <h2>Log</h2>
       <div id="log"></div>
     </section>
@@ -204,6 +211,11 @@ document.addEventListener("keydown", e => {
 });
 $("save").onclick = () => send({op: "save", segments: segs.map(s => ({start_ms: Math.round(s.start), end_ms: Math.round(s.end), label: s.label}))});
 $("discard").onclick = () => { send({op: "discard"}); log("discarded"); };
+$("traindeploy").onclick = () => {
+  $("traindeploy").disabled = true;
+  $("modelstatus").textContent = "Training…";
+  send({op: "train_deploy"});
+};
 $("identify").onclick = () => send({op: "identify"});
 $("disconnect").onclick = () => send({op: "disconnect"});
 $("rename").onclick = () => { const n = $("newname").value.trim(); if (n) { send({op: "rename", name: n}); log("renamed to " + n); $("newname").value = ""; } };
@@ -328,8 +340,14 @@ function connect() {
     } else if (m.type === "saved") {
       log(m.path ? "saved " + m.path + (segs.length ? ` (${segs.length} tagged)` : "") : "nothing to save");
       review = null; segs = []; sel = null;
+    } else if (m.type === "trained") {
+      const acc = m.accuracy == null ? "" : ` · ${Math.round(m.accuracy * 100)}% accurate`;
+      const counts = Object.entries(m.windows).map(([k, v]) => `${k} ${v}`).join(", ");
+      $("modelstatus").textContent = m.deployed ? `On badge${acc}` : `Trained${acc}, sending to badge…`;
+      if (m.deployed) { $("traindeploy").disabled = false; log(`model deployed (${counts}${acc})`); }
     } else if (m.type === "error") {
       log(m.message, "err");
+      if ($("traindeploy").disabled) { $("traindeploy").disabled = false; $("modelstatus").textContent = "Failed, see log"; }
     }
   };
 }

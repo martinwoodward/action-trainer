@@ -24,14 +24,20 @@ ROOT = Path(__file__).resolve().parent
 from protocol import (
     CMD_IDENTIFY,
     CMD_LABEL,
+    CMD_MODEL_BEGIN,
+    CMD_MODEL_DATA,
+    CMD_MODEL_END,
     CMD_NAME,
     COMPANY_ID,
+    CONTROL_MAX,
     INFO_UUID,
     STREAM_UUID,
     CONTROL_UUID,
+    model_checksum,
     unpack_mfg,
     unpack_samples,
 )
+import train as trainer
 
 DATA_DIR = ROOT / "data"
 WEB_DIR = ROOT / "web"
@@ -134,6 +140,38 @@ class Recorder:
         if self.client is None:
             raise RuntimeError("not connected")
         await self.client.write_gatt_char(CONTROL_UUID, op + arg.encode()[:60], response=True)
+
+    async def deploy_model(self, source):
+        if self.client is None:
+            raise RuntimeError("connect a badge to deploy")
+        chunk = max(20, min(CONTROL_MAX, self.client.mtu_size - 3) - 1)
+        write = lambda data: self.client.write_gatt_char(CONTROL_UUID, data, response=True)
+        await write(CMD_MODEL_BEGIN)
+        for i in range(0, len(source), chunk):
+            await write(CMD_MODEL_DATA + source[i:i + chunk])
+        tag = "%04x" % model_checksum(source)
+        await write(CMD_MODEL_END + f"{len(source)},{model_checksum(source)}".encode())
+        for _ in range(20):
+            await asyncio.sleep(0.25)
+            self.info = (await self.client.read_gatt_char(INFO_UUID)).decode(errors="replace")
+            if f"model={tag}" in self.info:
+                return tag
+            if "model=err" in self.info:
+                break
+        raise RuntimeError("badge didn't accept the model (is the pedometer app up to date?)")
+
+    async def train_and_deploy(self):
+        report = await asyncio.to_thread(trainer.train, DATA_DIR, ROOT / "dist" / "model.py")
+        v = report["grouped_validation"]
+        result = {
+            "type": "trained",
+            "windows": report["windows_per_label"],
+            "accuracy": v["accuracy"],
+            "deployed": None,
+        }
+        await self.broadcast(result)
+        result["deployed"] = await self.deploy_model((ROOT / "dist" / "model.py").read_bytes())
+        await self.broadcast(result)
 
     def on_stream(self, _char, data):
         seq, samples = unpack_samples(bytes(data))
@@ -362,6 +400,8 @@ class Recorder:
             await self.broadcast({"type": "saved", "path": path})
         elif op == "discard":
             self.pending = None
+        elif op == "train_deploy":
+            await self.train_and_deploy()
         await self.broadcast_status()
 
 
