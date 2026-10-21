@@ -390,17 +390,18 @@ const GUIDES = {
 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 // Mid-activity heckles for the demo, keyed by cue. Only phases of 6 s or more get one.
+// The first line of each list always plays first; the rest are shuffled.
 const QUIPS = {
-  WALK: ["Is that your walk? Really? Wow.", "Very runway. Keep going.", "Okay, that's a confident walk.",
-    "Ten thousand steps, here we come.", "Nobody's watching. Probably.", "Strutting. I respect it."],
-  LIFT: ["Is it heavy? It looks heavy.", "Badge curls. Feel the burn.", "Do you even lift?"],
-  FIDGET: ["Nervous? You seem nervous.", "This is not a fidget spinner.", "It's fine. Everything's fine."],
-  SWAY: ["Very persuasive. Tell me more.", "Big keynote energy.", "You're doing the TED talk thing."],
-  WAVE: ["Nice try. I'm onto you.", "Faking steps? Bold move.", "I see what you're doing."],
+  WALK: ["Is that your walk? Really? Wow.", "That's the walk of someone who just merged to main on a Friday.",
+    "Very runway. Keep going.", "Okay, that's a confident walk.", "Strutting. I respect it."],
+  LIFT: ["Badge curls. Feel the burn.", "Do you even lift?", "Is it heavy? It looks heavy."],
+  FIDGET: ["This is not a fidget spinner.", "Nervous? You seem nervous.", "It's fine. Everything's fine."],
+  SWAY: ["Big keynote energy.", "Very persuasive. Tell me more.", "You're doing the TED talk thing."],
+  WAVE: ["Nice try. Those don't count as steps.", "Faking steps? Bold move.", "Shaking it won't make you fitter."],
 };
 const DONE_LINES = {walk: "Done. Your walk has been judged. Fondly.", throw: "Done. Nothing broke. Probably.",
   drop: "Done. The badge forgives you."};
-const pick = list => list.splice(Math.floor(Math.random() * list.length), 1)[0];
+const shuffled = list => list.map(v => [Math.random(), v]).sort((a, b) => a[0] - b[0]).map(p => p[1]);
 const speak = text => {
   if (!window.speechSynthesis) return;
   speechSynthesis.cancel();
@@ -426,7 +427,7 @@ function renderGuide() {
 
 async function runGuide(kind) {
   const me = guide = {kind, steps: GUIDES[kind], i: 0, endsAt: 0, seen: false};
-  const quips = Object.fromEntries(Object.entries(QUIPS).map(([cue, lines]) => [cue, [...lines]]));
+  const quips = Object.fromEntries(Object.entries(QUIPS).map(([cue, [first, ...rest]]) => [cue, [first, ...shuffled(rest)]]));
   lastSaved = "";
   send({op: "start", notes: "guided " + kind});
   log(`guided ${kind} run`);
@@ -440,7 +441,7 @@ async function runGuide(kind) {
     let quipAt = secs >= 6 && quips[cue]?.length ? me.endsAt - secs * 600 : Infinity;
     while (guide === me && performance.now() < me.endsAt) {
       await sleep(100);
-      if (performance.now() >= quipAt) { quipAt = Infinity; speak(pick(quips[cue])); }
+      if (performance.now() >= quipAt) { quipAt = Infinity; speak(quips[cue].shift()); }
       renderGuide();
     }
   }
