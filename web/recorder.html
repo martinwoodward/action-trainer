@@ -363,15 +363,15 @@ const GUIDES = {
     ["still", "Stand still", "Don't move.", 5, "STILL"],
     ["walk", "Start walking", "Walk normally.", 15, "WALK"],
     stop(),
-    ["unknown", "Lift it up and down", "Stand in place and raise and lower the badge.", 8, "LIFT"],
+    ["unknown", "Fidget with it", "Turn it, tilt it, tap it. No steps.", 8, "FIDGET"],
     stop(),
     ["walk", "Walk again", "Walk normally.", 15, "WALK"],
     stop(),
-    ["unknown", "Fidget with it", "Turn it, tilt it, tap it. No steps.", 8, "FIDGET"],
+    ["unknown", "Swing your arms", "Stay in place, move like you're talking.", 6, "SWAY"],
     stop(),
     ["walk", "Walk again", "Walk normally.", 10, "WALK"],
     stop(),
-    ["unknown", "Swing your arms", "Stay in place, move like you're talking.", 6, "SWAY"],
+    ["unknown", "Lift it up and down", "Stand in place and raise and lower the badge.", 8, "LIFT"],
     stop(),
     ["walk", "Walk again", "Walk normally.", 8, "WALK"],
     stop(),
@@ -389,15 +389,16 @@ const GUIDES = {
   ]).flat(), ["still", "Leave it still", "Don't touch it.", 4, "STILL"]],
 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-// Mid-activity heckles for the demo, keyed by cue and played in order. Only phases
-// of 6 s or more get one; the walk guide has four walk phases and one of each other.
+// Mid-activity lines for the demo, keyed by cue and played in order. Only phases of
+// 6 s or more get one. They start straight and escalate as the walk guide goes on:
+// walk, fidget, walk, sway, walk, lift, walk, wave.
 const QUIPS = {
-  WALK: ["Is that your walk? Really? Wow.", "Work. Work it, girl.",
-    "That's the walk of someone who just merged to main on a Friday.", "Very runway. Keep going."],
-  LIFT: ["Badge curls. Feel the burn."],
-  FIDGET: ["This is not a fidget spinner."],
+  WALK: ["Nice and steady. Just like that.", "Is that your walk? Really? Wow.",
+    "That's the walk of someone who just merged to main on a Friday.", "Work. Work it, girl."],
+  FIDGET: ["Good. Keep fiddling with it."],
   SWAY: ["Big keynote energy."],
-  WAVE: ["Nice try. Those don't count as steps."],
+  LIFT: ["Badge curls. Feel the burn."],
+  WAVE: ["Nice try. I'm a decision tree, not an idiot."],
 };
 const speak = text => {
   if (!window.speechSynthesis) return;
