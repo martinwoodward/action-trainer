@@ -27,24 +27,24 @@ Start the badge's Airtime/Pedometer app, then launch the local recorder:
 python recorder.py
 ```
 
-Open `http://localhost:8765` if it does not open automatically. Select the
-badge, record sessions in the intended physical configuration (including the
-plushy, if that is how the badge will be used), and save each labeled session.
-Each session is stored under `data/<label>/` as a CSV plus a JSON metadata
-sidecar. `data/` is intentionally ignored by Git; review and curate training
+Open `http://localhost:8765` if it does not open automatically. Connect the
+badge, press **Record**, and move however you like (walk, throw, drop, hold it
+still, lift it up and down), in the intended physical configuration
+(including the plushy, if that is how the badge will be used). Press **Stop**
+when you're done.
+
+The review panel then shows the whole recording. Drag across the chart to
+select a stretch and tag it `walk`, `throw`, `drop`, `still`, or `other`
+(buttons or keys 1–5). `other` is for lifting and handling and is stored as
+the `unknown` label; the generated model maps an `unknown` prediction to
+`still` as the safe default. Only tagged time is used for training.
+
+Sessions are saved under `data/recordings/` as a CSV plus a JSON sidecar, with
+tags stored as `segments` (`start_ms`, `end_ms`, `label`). Older sessions in
+per-label folders (`data/<label>/`) still work: their untagged time counts as
+the folder's label. The Model panel shows how many tagged seconds you have per
+label. `data/` is intentionally ignored by Git; review and curate training
 data explicitly before sharing or committing it.
-
-The recorder captures five labels: `throw`, `drop`, `still`, `walk`, and
-`unknown`. Unknown/handling examples are useful training data, but the
-generated model maps an `unknown` prediction to `still` as the safe default
-detected action.
-
-After you stop a recording, the review panel shows the whole session. Drag
-across the chart to select a stretch and tag it (buttons or keys 1–6), for
-example `unknown` for the times you lifted the badge up and down during a
-`walk` session, or `ignore` for set-up time. Tags are saved as `segments`
-(`start_ms`, `end_ms`, `label`) in the JSON sidecar. Untagged time keeps the
-session's label.
 
 ## Train and export
 
@@ -53,8 +53,9 @@ python train.py --data data --output dist/model.py
 ```
 
 Training windows are 1 second long with a 250 ms hop. A window wholly inside
-a tagged segment takes that segment's label; windows that cross a segment edge
-or fall inside an `ignore` segment are skipped. Features are computed
+a tagged segment takes that segment's label; windows that cross a segment edge,
+fall inside an `ignore` segment, or sit in untagged time of a
+`data/recordings/` session are skipped. Features are computed
 from measured timestamps and six-axis IMU samples; the decision tree is
 capped at depth 6. Grouped cross-validation keeps each recorded session wholly
 inside one fold. The command writes a self-contained, MicroPython-compatible

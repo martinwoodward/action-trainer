@@ -1,9 +1,10 @@
 """Training-data recorder for badge motion models.
 
 Runs a local web UI (http://localhost:8765) backed by bleak. Pick a badge,
-connect over GATT, pick an action, and record a session; the badge streams
-every IMU sample (with its detector state) and the session is saved to
-data/<label>/<timestamp>_<badge>.csv plus a .json sidecar.
+connect over GATT, and record whatever movement you like; the badge streams
+every IMU sample (with its detector state). Tag stretches of the recording as
+walk/throw/drop/still/other, and it is saved to
+data/recordings/<timestamp>_<badge>.csv plus a .json sidecar.
 
 Usage:  python recorder.py [--port 8765] [--no-browser]
 """
@@ -51,14 +52,6 @@ LSB_PER_G = 16384.0
 CSV_HEADER = ("t_ms", "ax", "ay", "az", "gx", "gy", "gz", "events", "state")
 
 
-def session_counts():
-    counts = {}
-    for label in LABELS:
-        folder = DATA_DIR / label
-        counts[label] = len(list(folder.glob("*.csv"))) if folder.exists() else 0
-    return counts
-
-
 class Recorder:
     def __init__(self):
         self.badges = {}  # address -> dict
@@ -77,6 +70,7 @@ class Recorder:
         self.pending = None  # finished recording awaiting save/discard
         self.review_ready = False  # pending recording not yet sent to the UI
         self.live = []  # samples to push to the UI
+        self.seconds = None  # cached tagged seconds per label; reset on save
         self.write_lock = asyncio.Lock()  # CoreBluetooth allows one pending write per characteristic
 
     # --- scanning ----------------------------------------------------------
@@ -226,14 +220,9 @@ class Recorder:
             self.live.append((self.t_ms, round(mag, 3), state))
 
     # --- recording ---------------------------------------------------------
-    def start_recording(self, label, takes, plushy, notes):
-        if label not in LABELS:
-            raise RuntimeError("unknown label")
+    def start_recording(self, notes=""):
         self.pending = None
         self.recording = {
-            "label": label,
-            "takes": takes,
-            "plushy": plushy,
             "notes": notes,
             "rows": [],
             "marks": [],
@@ -270,7 +259,7 @@ class Recorder:
             (row[0] - t0, round(math.sqrt(row[1] ** 2 + row[2] ** 2 + row[3] ** 2) / LSB_PER_G, 3), row[8])
             for row in rec["rows"]
         ]
-        return {"type": "review", "label": rec["label"], "duration_ms": data[-1][0], "data": data}
+        return {"type": "review", "duration_ms": data[-1][0], "data": data}
 
     @staticmethod
     def clean_segments(segments, duration_ms):
@@ -299,7 +288,7 @@ class Recorder:
         self.pending = None
         badge = self.badges.get(self.address, {})
         stamp = rec["started"].strftime("%Y%m%d-%H%M%S")
-        folder = DATA_DIR / rec["label"]
+        folder = DATA_DIR / trainer.RECORDINGS
         folder.mkdir(parents=True, exist_ok=True)
         stem = "%s_%s" % (stamp, badge.get("badge_id", "unknown"))
         with open(folder / (stem + ".csv"), "w", newline="") as f:
@@ -308,7 +297,6 @@ class Recorder:
             for row in rec["rows"]:
                 w.writerow((row[0] - t0,) + row[1:])
         meta = {
-            "label": rec["label"],
             "badge_id": badge.get("badge_id"),
             "badge_name": badge.get("name"),
             "badge_info": self.info,
@@ -316,30 +304,31 @@ class Recorder:
             "duration_s": rec["duration_s"],
             "samples": len(rec["rows"]),
             "rate_hz": rec["rate_hz"],
-            "takes_target": rec["takes"],
             "flights_detected": rec["flights"],
             "marks_ms": [m - t0 for m in rec["marks"]],
             "segments": segments,
-            "plushy": rec["plushy"],
             "notes": rec["notes"],
             "lost_packets": rec["lost_packets"],
             "end_reason": rec["reason"],
             "lsb_per_g": LSB_PER_G,
         }
         (folder / (stem + ".json")).write_text(json.dumps(meta, indent=2))
+        self.seconds = None
         return str((folder / (stem + ".csv")).relative_to(ROOT))
 
     def badge_prompt(self):
         rec = self.recording
         if rec is None:
             return ""
-        label = rec["label"].upper()
-        if rec["label"] in ("throw", "drop"):
-            return "%s %d/%d" % (label, rec["flights"], rec["takes"])
         secs = (rec["rows"][-1][0] - rec["rows"][0][0]) // 1000 if len(rec["rows"]) > 1 else 0
-        return "%s %ds" % (label, secs)
+        return "REC %ds" % secs
 
     # --- UI ----------------------------------------------------------------
+    def label_seconds(self):
+        if self.seconds is None:
+            self.seconds = trainer.label_seconds(DATA_DIR)
+        return self.seconds
+
     def status(self):
         rec = self.recording
         pend = self.pending
@@ -358,8 +347,6 @@ class Recorder:
             "recording": None
             if rec is None
             else {
-                "label": rec["label"],
-                "takes": rec["takes"],
                 "flights": rec["flights"],
                 "marks": len(rec["marks"]),
                 "samples": len(rec["rows"]),
@@ -368,10 +355,10 @@ class Recorder:
             "pending": None
             if pend is None
             else {
-                k: pend[k] for k in ("label", "takes", "flights", "duration_s", "rate_hz", "lost_packets", "reason")
+                k: pend[k] for k in ("flights", "duration_s", "rate_hz", "lost_packets", "reason")
             }
             | {"marks": len(pend["marks"]), "samples": len(pend["rows"])},
-            "counts": session_counts(),
+            "seconds": self.label_seconds(),
         }
 
     async def broadcast(self, msg):
@@ -446,7 +433,7 @@ class Recorder:
             if self.address in self.badges:
                 self.badges[self.address]["name"] = name
         elif op == "start":
-            self.start_recording(msg["label"], int(msg.get("takes", 10)), bool(msg.get("plushy")), msg.get("notes", ""))
+            self.start_recording(msg.get("notes", ""))
         elif op == "mark":
             self.mark()
         elif op == "stop":

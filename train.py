@@ -16,6 +16,8 @@ from features import AXIS_NAMES, FEATURE_NAMES, extract_features
 
 LABELS = ("drop", "still", "throw", "unknown", "walk")
 IGNORE = "ignore"
+# Free-form recordings: only tagged segments train; untagged time is ignored.
+RECORDINGS = "recordings"
 WINDOW_MS = 1000
 HOP_MS = 250
 MAX_DEPTH = 6
@@ -78,14 +80,43 @@ def window_session(samples, label, group, segments=()):
     return x, y, groups
 
 
+def session_folders(data_dir):
+    """(folder, default label) pairs. Legacy per-label folders treat untagged
+    time as that label; the recordings folder ignores untagged time."""
+    if not data_dir.is_dir():
+        return []
+    out = []
+    for label_dir in sorted(path for path in data_dir.iterdir() if path.is_dir()):
+        name = label_dir.name.lower()
+        if name in LABELS:
+            out.append((label_dir, name))
+        elif name == RECORDINGS:
+            out.append((label_dir, None))
+    return out
+
+
+def label_seconds(data_dir):
+    """Seconds of training time per label, from the JSON sidecars."""
+    totals = Counter({label: 0.0 for label in LABELS})
+    for label_dir, default in session_folders(data_dir):
+        for path in label_dir.glob("*.csv"):
+            sidecar = path.with_suffix(".json")
+            meta = json.loads(sidecar.read_text(encoding="utf-8")) if sidecar.is_file() else {}
+            tagged = 0.0
+            for start, end, label in read_segments(path):
+                tagged += (end - start) / 1000
+                if label != IGNORE:
+                    totals[label] += (end - start) / 1000
+            if default:
+                totals[default] += max(0.0, float(meta.get("duration_s") or 0) - tagged)
+    return {label: round(totals[label], 1) for label in LABELS}
+
+
 def load_dataset(data_dir):
     x, y, groups = [], [], []
     sessions_by_label = defaultdict(int)
     samples_by_label = Counter()
-    for label_dir in sorted(path for path in data_dir.iterdir() if path.is_dir()):
-        label = label_dir.name.lower()
-        if label not in LABELS:
-            continue
+    for label_dir, label in session_folders(data_dir):
         for path in sorted(label_dir.glob("*.csv")):
             samples = read_session(path)
             group = str(path.parent.name + "/" + path.stem)
@@ -94,7 +125,8 @@ def load_dataset(data_dir):
                 x.extend(sx)
                 y.extend(sy)
                 groups.extend(sg)
-                sessions_by_label[label] += 1
+                for seen in set(sy):
+                    sessions_by_label[seen] += 1
                 samples_by_label.update(sy)
     if not x:
         raise ValueError(f"No complete 1-second training windows found under {data_dir}")

@@ -23,11 +23,9 @@
   .badge:first-child { border-top:0; }
   .badge small { color:var(--dim); display:block; }
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px; }
-  .labels { display:grid; grid-template-columns:repeat(5, 1fr); gap:8px; }
-  .labels button { padding:12px 6px; text-transform:capitalize; }
-  .labels button.sel { outline:2px solid var(--accent); }
-  .labels button span { display:block; font-size:12px; color:var(--dim); }
-  #guide { color:var(--dim); margin:10px 0 0; min-height:2.8em; }
+  #seconds { display:grid; grid-template-columns:repeat(5, 1fr); gap:6px; margin-bottom:10px; text-align:center; }
+  #seconds div { background:var(--bg); border-radius:6px; padding:6px 2px; font-size:12px; color:var(--dim); text-transform:capitalize; }
+  #seconds b { display:block; font-size:15px; color:var(--text); font-variant-numeric:tabular-nums; }
   #big { font-size:42px; font-weight:700; font-variant-numeric:tabular-nums; }
   #bigsub { color:var(--dim); }
   canvas { width:100%; height:260px; background:var(--bg); border-radius:6px; display:block; }
@@ -70,6 +68,7 @@
     </section>
     <section>
       <h2>Model</h2>
+      <div id="seconds"></div>
       <div class="row" style="align-items:center">
         <button id="traindeploy" class="primary">Train &amp; deploy</button>
         <span id="modelstatus" style="color:var(--dim);font-size:13px"></span>
@@ -82,23 +81,9 @@
   </div>
   <div>
     <section>
-      <h2>Action</h2>
-      <div class="labels" id="labels"></div>
-      <p id="guide"></p>
-      <div class="row">
-        <label>Takes <input id="takes" type="number" min="1" max="50" value="10" style="width:64px"></label>
-        <label>Seconds <input id="seconds" type="number" min="5" max="600" value="60" style="width:72px"></label>
-        <label><input id="plushy" type="checkbox" checked> In plushy</label>
-        <input id="notes" type="text" placeholder="Notes (surface, who, etc.)" style="flex:1">
-      </div>
-    </section>
-    <section>
       <div style="display:flex;justify-content:space-between;align-items:center;gap:16px">
-        <div><div id="big">—</div><div id="bigsub">Connect a badge, pick an action, press Start.</div></div>
-        <div class="row" style="margin:0">
-          <button id="mark" title="Space">Mark take (Space)</button>
-          <button id="startstop" class="primary" disabled>Start</button>
-        </div>
+        <div><div id="big">—</div><div id="bigsub">Connect a badge, then press Record.</div></div>
+        <button id="startstop" class="primary" disabled>Record</button>
       </div>
       <div style="margin-top:12px"><canvas id="plot"></canvas></div>
       <div class="legend" id="legend"></div>
@@ -115,19 +100,11 @@
   </div>
 </main>
 <script>
-const GUIDE = {
-  throw: "Throw it up and catch it, 10 times. Hold it still in your hand for ~2 s between throws. The counter ticks on each detected flight.",
-  drop: "Drop it onto the floor 10 times. Leave it on the floor ~2 s, pick it up, hold still ~2 s, repeat.",
-  still: "Put the badge down and don't touch it. Try a few surfaces across sessions (table, floor, chair).",
-  walk: "Wear it on the lanyard (in the plushy if that's the stage setup) and walk normally.",
-  unknown: "Handle it without throwing or dropping: pick up, wave, shake, twist, pass between hands, put in a pocket.",
-};
-const TIMED = new Set(["still", "walk", "unknown"]);
 const STATE_COLOURS = ["#1e46c8", "#1e963c", "#e6c814", "#f07814", "#d21e1e", "#5a5a64"];
 const STATE_NAMES = ["Still", "Walk", "Flying", "Throw", "Drop", "Handling"];
 const WINDOW_MS = 10000;
 
-let ws, status = null, label = "throw", samples = [];
+let ws, status = null, samples = [];
 const $ = id => document.getElementById(id);
 const send = msg => ws && ws.readyState === 1 && ws.send(JSON.stringify(msg));
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
@@ -135,15 +112,12 @@ const log = (text, cls) => { const d = document.createElement("div"); d.textCont
 
 $("legend").innerHTML = STATE_NAMES.map((n, i) => `<span><i style="background:${STATE_COLOURS[i]}"></i>${n}</span>`).join("") + `<span>line = |a| (g)</span>`;
 
-function renderLabels() {
-  const counts = status ? status.counts : {};
-  $("labels").innerHTML = Object.keys(GUIDE).map(l =>
-    `<button data-l="${l}" class="${l === label ? "sel" : ""}">${l}<span>${counts[l] ?? 0} saved</span></button>`).join("");
-  $("guide").textContent = GUIDE[label];
-  $("takes").disabled = TIMED.has(label);
-  $("seconds").disabled = !TIMED.has(label);
+const SECONDS_LABELS = [["walk", "walk"], ["throw", "throw"], ["drop", "drop"], ["still", "still"], ["unknown", "other"]];
+const dur = s => s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`;
+function renderSeconds() {
+  const secs = status ? status.seconds : {};
+  $("seconds").innerHTML = SECONDS_LABELS.map(([k, name]) => `<div><b>${dur(secs[k] || 0)}</b>${name}</div>`).join("");
 }
-$("labels").onclick = e => { const b = e.target.closest("button"); if (b && !(status && status.recording)) { label = b.dataset.l; renderLabels(); } };
 
 function renderBadges() {
   if (!status.badges.length) return;
@@ -160,37 +134,29 @@ $("badges").onclick = e => { const b = e.target.closest("button[data-a]"); if (b
 
 function render() {
   renderBadges();
-  renderLabels();
+  renderSeconds();
   const conn = !!status.connected, rec = status.recording, p = status.pending;
   $("connected").hidden = !conn;
   $("info").textContent = status.info + (conn ? ` · lost packets ${status.lost}` : "");
   $("startstop").disabled = !conn && !rec;
-  $("startstop").textContent = rec ? "Stop" : "Start";
+  $("startstop").textContent = rec ? "Stop" : "Record";
   $("startstop").className = rec ? "danger" : "primary";
-  $("mark").disabled = !rec;
   if (rec) {
-    if (TIMED.has(rec.label)) {
-      const target = +$("seconds").value;
-      $("big").textContent = `${rec.seconds.toFixed(0)} / ${target} s`;
-      if (rec.seconds >= target) send({op: "stop"});
-    } else {
-      $("big").textContent = `${rec.flights} / ${rec.takes} flights`;
-    }
-    $("bigsub").textContent = `Recording ${rec.label} · ${rec.samples} samples · ${rec.marks} marks`;
+    $("big").textContent = dur(rec.seconds);
+    $("bigsub").textContent = `Recording · move however you like, then press Stop`;
   } else if (status.connecting || status.reconnecting) {
     $("big").textContent = "…"; $("bigsub").textContent = status.connecting ? "Connecting" : "Reconnecting to badge…";
   } else if (p) {
     $("big").textContent = "Review";
-    $("bigsub").textContent = "Save or discard the recording below.";
+    $("bigsub").textContent = "Tag what you did below, then save.";
   } else {
     $("big").textContent = conn ? "Ready" : "—";
-    $("bigsub").textContent = conn ? "Pick an action and press Start." : "Connect a badge, pick an action, press Start.";
+    $("bigsub").textContent = conn ? "Press Record, then walk, throw, drop or hold still." : "Connect a badge, then press Record.";
   }
   $("pending").hidden = !p;
   if (p) {
-    const rows = [["Action", p.label], ["Duration", p.duration_s + " s"], ["Samples", `${p.samples} @ ${p.rate_hz} Hz`],
-      ["Flights detected", p.flights + (TIMED.has(p.label) ? "" : ` (target ${p.takes})`)], ["Marks", p.marks],
-      ["Lost packets", p.lost_packets], ["Ended", p.reason]];
+    const rows = [["Duration", p.duration_s + " s"], ["Samples", `${p.samples} @ ${p.rate_hz} Hz`],
+      ["Flights detected", p.flights], ["Lost packets", p.lost_packets]];
     $("summary").innerHTML = rows.map(([k, v]) => `<tr><td style="color:var(--dim)">${k}</td><td>${esc(v)}</td></tr>`).join("");
     if (review && $("review").width !== $("review").clientWidth * (window.devicePixelRatio || 1)) renderReview();
   }
@@ -198,13 +164,11 @@ function render() {
 
 $("startstop").onclick = () => {
   if (status.recording) return send({op: "stop"});
-  send({op: "start", label, takes: +$("takes").value, plushy: $("plushy").checked, notes: $("notes").value});
-  log(`recording ${label}`);
+  send({op: "start"});
+  log("recording");
 };
-$("mark").onclick = () => send({op: "mark"});
 document.addEventListener("keydown", e => {
   if (e.target.tagName === "INPUT") return;
-  if (e.code === "Space") { e.preventDefault(); if (status && status.recording) send({op: "mark"}); return; }
   const i = +e.key - 1;
   if (review && !$("pending").hidden && i >= 0 && i < ANNO_LABELS.length) annotate(ANNO_LABELS[i]);
   if (e.key === "Escape") { sel = null; renderReview(); }
@@ -248,9 +212,10 @@ function draw() {
 requestAnimationFrame(draw);
 
 // --- Review annotation: drag across the chart, then tag what was happening. ---
-const ANNO_LABELS = ["walk", "still", "unknown", "throw", "drop", "ignore"];
+const ANNO_LABELS = ["walk", "throw", "drop", "still", "unknown"];
 const ANNO_COLOURS = {walk: "#3fb950", still: "#2f81f7", unknown: "#a371f7", throw: "#f0883e", drop: "#f85149", ignore: "#6e7681"};
-const ANNO_NAMES = {unknown: "unknown (handling)"};
+const ANNO_NAMES = {unknown: "other"};
+const annoName = l => l === "unknown" ? "other" : l;
 let review = null, segs = [], sel = null, dragFrom = null;
 
 $("annolabels").innerHTML = ANNO_LABELS.map((l, i) =>
@@ -281,11 +246,12 @@ const fmt = ms => (ms / 1000).toFixed(1) + " s";
 
 function renderReview() {
   if (!review) return;
-  $("annohint").textContent = `Drag across the chart to select a stretch, then tag it (or press 1–6). ` +
-    `Untagged time counts as "${review.label}". Use "ignore" for anything you don't want trained.`;
+  $("annohint").textContent = "Drag across the chart to select a stretch, then tag it (or press 1–5). Use other for lifting or handling. Only tagged time is trained.";
   for (const b of $("annolabels").querySelectorAll("button")) b.disabled = !sel;
+  $("save").disabled = !segs.length;
+  $("save").title = segs.length ? "" : "Tag at least one stretch first";
   $("segs").innerHTML = segs.map((s, i) =>
-    `<div><i style="background:${ANNO_COLOURS[s.label]}"></i><span style="text-transform:capitalize;min-width:80px">${s.label}</span>` +
+    `<div><i style="background:${ANNO_COLOURS[s.label]}"></i><span style="text-transform:capitalize;min-width:80px">${annoName(s.label)}</span>` +
     `<span style="color:var(--dim)">${fmt(s.start)} – ${fmt(s.end)}</span><button data-i="${i}">Remove</button></div>`).join("");
 
   const c = $("review"), dpr = window.devicePixelRatio || 1;
@@ -302,7 +268,7 @@ function renderReview() {
     g.fillRect(x(s.start), 0, x(s.end) - x(s.start), h);
     g.globalAlpha = 1; g.fillRect(x(s.start), 0, x(s.end) - x(s.start), 4);
     g.fillStyle = "#e6edf3"; g.font = "11px system-ui";
-    if (x(s.end) - x(s.start) > 30) g.fillText(s.label, x(s.start) + 4, 16);
+    if (x(s.end) - x(s.start) > 30) g.fillText(annoName(s.label), x(s.start) + 4, 16);
   }
   g.strokeStyle = "#30363d"; g.fillStyle = "#8b949e"; g.font = "11px system-ui"; g.lineWidth = 1;
   for (const v of [1, 2, 3]) { g.beginPath(); g.moveTo(0, y(v)); g.lineTo(w, y(v)); g.stroke(); g.fillText(v + " g", 4, y(v) - 3); }
@@ -352,7 +318,7 @@ function connect() {
   };
 }
 connect();
-renderLabels();
+renderSeconds();
 </script>
 </body>
 </html>

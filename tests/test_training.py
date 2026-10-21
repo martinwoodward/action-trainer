@@ -7,7 +7,8 @@ from pathlib import Path
 from sklearn.tree import DecisionTreeClassifier
 
 from features import FEATURE_NAMES, extract_features
-from train import read_segments, read_session, train, window_label, window_session, write_model
+from train import (label_seconds, load_dataset, read_segments, read_session, train, window_label,
+                   window_session, write_model)
 
 
 class FeatureTests(unittest.TestCase):
@@ -50,6 +51,40 @@ class SegmentTests(unittest.TestCase):
             self.assertIn("unknown", y)
             self.assertIn("walk", y)
             self.assertEqual(y.count("unknown"), 5)
+
+    def _write_session(self, folder, name, duration_ms, segments, duration_s):
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"{name}.csv"
+        with path.open("w", encoding="utf-8") as stream:
+            stream.write("t_ms,ax,ay,az,gx,gy,gz,events,state\n")
+            for t_ms in range(0, duration_ms, 20):
+                stream.write(f"{t_ms},0,0,16384,0,0,0,0,0\n")
+        path.with_suffix(".json").write_text(json.dumps({"duration_s": duration_s, "segments": segments}))
+
+    def test_recordings_train_only_tagged_time(self):
+        with tempfile.TemporaryDirectory() as temp:
+            data = Path(temp)
+            self._write_session(data / "recordings", "a", 8000,
+                                [{"start_ms": 1000, "end_ms": 3000, "label": "walk"},
+                                 {"start_ms": 4000, "end_ms": 6000, "label": "still"}], 8)
+            _, y, _, sessions, _ = load_dataset(data)
+            self.assertEqual(set(y), {"walk", "still"})
+            self.assertEqual(y.count("walk"), 5)
+            self.assertEqual(sessions, {"walk": 1, "still": 1})
+
+    def test_label_seconds_counts_tags_and_legacy_untagged_time(self):
+        with tempfile.TemporaryDirectory() as temp:
+            data = Path(temp)
+            self._write_session(data / "recordings", "a", 1000,
+                                [{"start_ms": 0, "end_ms": 2500, "label": "throw"},
+                                 {"start_ms": 3000, "end_ms": 4000, "label": "ignore"}], 10)
+            self._write_session(data / "walk", "b", 1000,
+                                [{"start_ms": 0, "end_ms": 1000, "label": "unknown"}], 6)
+            seconds = label_seconds(data)
+            self.assertEqual(seconds["throw"], 2.5)
+            self.assertEqual(seconds["walk"], 5.0)
+            self.assertEqual(seconds["unknown"], 1.0)
+            self.assertEqual(seconds["still"], 0.0)
 
 
 class TrainingTests(unittest.TestCase):
