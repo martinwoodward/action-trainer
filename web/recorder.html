@@ -2,56 +2,82 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Air-time recorder</title>
+<title>Action Trainer · Badger</title>
+<link rel="icon" href="https://badger.github.io/favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mona+Sans:wdth,wght@75..125,400..800&display=swap">
 <style>
-  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3; --dim:#8b949e; --accent:#2f81f7; --rec:#f85149; --ok:#3fb950; }
+  /* Theme tokens from badger.github.io (dark). */
+  :root {
+    --bg:#050506; --panel:#111312; --inset:#0a0c0b; --control:#131614; --control-hover:#1a1e1b;
+    --line:#353b37; --text:#f5f5f5; --dim:#98a39b; --accent:#5fed83; --accent-fg:#050506;
+    --rec:#e9465a; --ok:#5fed83; --radius:.7rem;
+    --sans:"Mona Sans", system-ui, sans-serif; --mono:"Monaspace Neon", ui-monospace, "SF Mono", Menlo, monospace;
+    color-scheme:dark;
+  }
   * { box-sizing: border-box; }
-  body { margin:0; font:15px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--text); }
-  header { padding:12px 20px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:center; }
-  header h1 { font-size:18px; margin:0; }
-  #conn { color:var(--dim); }
-  main { display:grid; grid-template-columns: 320px 1fr; gap:16px; padding:16px 20px; }
-  section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; margin-bottom:16px; }
-  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); margin:0 0 10px; }
-  button { font:inherit; color:var(--text); background:#21262d; border:1px solid var(--line); border-radius:6px; padding:6px 12px; cursor:pointer; }
-  button:hover:not(:disabled) { border-color:var(--dim); }
+  body { margin:0; font:15px/1.5 var(--sans); background:var(--bg); color:var(--text); -webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(circle at 78% 0%, rgba(95,237,131,.07), transparent 26rem), linear-gradient(180deg, rgba(255,255,255,.015), transparent 26rem);
+    background-attachment:fixed; min-height:100vh; }
+  body::before { content:""; position:fixed; inset:0 0 auto 0; height:420px; pointer-events:none; z-index:-1;
+    background-image:radial-gradient(circle, rgba(95,237,131,.24) 1px, transparent 1px); background-size:22px 22px;
+    -webkit-mask-image:linear-gradient(180deg, black, transparent 82%); mask-image:linear-gradient(180deg, black, transparent 82%); }
+  header { position:sticky; top:0; z-index:5; height:4.5rem; padding:0 24px; border-bottom:1px solid rgba(53,59,55,.8);
+    background:rgba(5,5,6,.9); backdrop-filter:blur(24px); display:flex; gap:12px; align-items:center; }
+  header img { width:36px; height:36px; }
+  header h1 { font-size:24px; font-weight:600; letter-spacing:-.02em; margin:0; font-stretch:87.5%; }
+  #conn { margin-left:auto; font:500 11px/1 var(--mono); text-transform:uppercase; letter-spacing:.14em; color:var(--dim); }
+  main { display:grid; grid-template-columns: 340px 1fr; gap:20px; padding:24px; max-width:1400px; margin:0 auto; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:18px; margin-bottom:20px;
+    box-shadow:0 14px 40px rgba(0,0,0,.18); }
+  h2 { font:500 11px/1 var(--mono); text-transform:uppercase; letter-spacing:.14em; color:var(--dim); margin:0 0 14px; }
+  button { font:500 14px/1.2 var(--sans); color:var(--text); background:var(--control); border:1px solid var(--line);
+    border-radius:calc(var(--radius) - 2px); padding:8px 14px; cursor:pointer; transition:border-color .15s, background .15s, color .15s; }
+  button:hover:not(:disabled) { border-color:rgba(95,237,131,.5); background:var(--control-hover); }
+  button:active:not(:disabled) { transform:translateY(1px); }
+  button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   button:disabled { opacity:.45; cursor:default; }
-  button.primary { background:var(--accent); border-color:var(--accent); }
-  button.danger { background:var(--rec); border-color:var(--rec); }
-  input[type=text], input[type=number] { font:inherit; color:var(--text); background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:5px 8px; }
-  .badge { display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-top:1px solid var(--line); gap:8px; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-fg); font-weight:600; }
+  button.primary:hover:not(:disabled) { background:#7ff19b; border-color:#7ff19b; }
+  button.danger { background:rgba(233,70,90,.12); border-color:rgba(233,70,90,.6); color:#ff8a98; }
+  button.danger:hover:not(:disabled) { background:rgba(233,70,90,.2); border-color:var(--rec); }
+  input[type=text], input[type=number] { font:inherit; color:var(--text); background:var(--inset); border:1px solid var(--line);
+    border-radius:calc(var(--radius) - 2px); padding:7px 10px; }
+  input:focus { outline:none; border-color:var(--accent); }
+  .badge { display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-top:1px solid var(--line); gap:8px; }
   .badge:first-child { border-top:0; }
-  .badge small { color:var(--dim); display:block; }
-  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px; }
-  #seconds { display:grid; grid-template-columns:repeat(5, 1fr); gap:6px; margin-bottom:10px; text-align:center; }
-  #seconds div { background:var(--bg); border-radius:6px; padding:6px 2px; font-size:12px; color:var(--dim); text-transform:capitalize; }
-  #seconds b { display:block; font-size:15px; color:var(--text); font-variant-numeric:tabular-nums; }
-  #guides button { padding:10px 16px; }
-  #guides button i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:8px; vertical-align:-1px; }
-  #phasebar { height:6px; background:var(--bg); border-radius:3px; margin:10px 0 4px; overflow:hidden; }
-  #phasebar i { display:block; height:100%; width:0; background:var(--accent); }
-  #big { font-size:42px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .badge small { color:var(--dim); display:block; font:12px/1.4 var(--mono); }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px; }
+  #seconds { display:grid; grid-template-columns:repeat(5, 1fr); gap:6px; margin-bottom:12px; text-align:center; }
+  #seconds div { background:var(--inset); border:1px solid var(--line); border-radius:calc(var(--radius) - 4px); padding:8px 2px;
+    font:10px/1.2 var(--mono); letter-spacing:.08em; color:var(--dim); text-transform:uppercase; }
+  #seconds b { display:block; font:600 14px/1.4 var(--mono); text-transform:none; letter-spacing:0; white-space:nowrap; color:var(--text); font-variant-numeric:tabular-nums; }
+  #guides button { padding:11px 18px; }
+  #guides button i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:8px; vertical-align:-1px; }
+  #phasebar { height:6px; background:var(--inset); border-radius:3px; margin:12px 0 4px; overflow:hidden; }
+  #phasebar i { display:block; height:100%; width:0; background:var(--accent); box-shadow:0 0 12px rgba(95,237,131,.6); }
+  #big { font-size:48px; font-weight:700; letter-spacing:-.03em; font-stretch:87.5%; font-variant-numeric:tabular-nums; }
   #bigsub { color:var(--dim); }
-  canvas { width:100%; height:260px; background:var(--bg); border-radius:6px; display:block; }
-  .legend { display:flex; gap:12px; font-size:12px; color:var(--dim); margin-top:6px; }
-  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
-  #pending table { border-collapse:collapse; margin-bottom:10px; }
-  #pending td { padding:2px 12px 2px 0; }
-  #log { color:var(--dim); font-size:13px; max-height:120px; overflow:auto; }
+  canvas { width:100%; height:260px; background:var(--inset); border:1px solid var(--line); border-radius:calc(var(--radius) - 2px); display:block; }
+  .legend { display:flex; gap:14px; font:11px/1 var(--mono); color:var(--dim); margin-top:10px; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
+  #pending table { border-collapse:collapse; margin-bottom:10px; font-family:var(--mono); font-size:13px; }
+  #pending td { padding:3px 14px 3px 0; }
+  #log { color:var(--dim); font:12px/1.6 var(--mono); max-height:140px; overflow:auto; }
   .err { color:var(--rec); }
-  .state { font-weight:600; }
-  .hint { color:var(--dim); font-size:13px; margin:0 0 8px; }
+  .state { font-weight:600; color:var(--accent); }
+  .hint { color:var(--dim); font-size:13px; margin:0 0 10px; }
   #annolabels button { text-transform:capitalize; }
-  #annolabels button i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:-1px; }
-  #annolabels kbd { color:var(--dim); font-size:11px; margin-left:6px; }
-  #segs { font-size:13px; margin-top:8px; }
-  #segs div { display:flex; gap:10px; align-items:center; padding:3px 0; }
-  #segs i { display:inline-block; width:10px; height:10px; border-radius:2px; }
-  #segs button { padding:0 8px; font-size:12px; }
+  #annolabels button i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:-1px; }
+  #annolabels kbd { color:var(--dim); font:11px var(--mono); margin-left:6px; }
+  #segs { font-size:13px; margin-top:10px; }
+  #segs div { display:flex; gap:10px; align-items:center; padding:3px 0; font-family:var(--mono); }
+  #segs i { display:inline-block; width:10px; height:10px; border-radius:3px; }
+  #segs button { padding:2px 8px; font-size:12px; }
 </style>
 </head>
 <body>
-<header><h1>Air-time recorder</h1><span id="conn">connecting to backend…</span></header>
+<header><img src="https://badger.github.io/favicon.svg" alt=""><h1>Action Trainer</h1><span id="conn">connecting to backend…</span></header>
 <main>
   <div>
     <section>
@@ -88,9 +114,9 @@
       <div id="big">—</div><div id="bigsub">Connect a badge to start.</div>
       <div id="phasebar" hidden><i></i></div>
       <div class="row" id="guides" style="margin-top:12px">
-        <button data-g="walk"><i style="background:#3fb950"></i>Train walk</button>
+        <button data-g="walk"><i style="background:#5fed83"></i>Train walk</button>
         <button data-g="throw"><i style="background:#f0883e"></i>Train throw</button>
-        <button data-g="drop"><i style="background:#f85149"></i>Train drop</button>
+        <button data-g="drop"><i style="background:#e9465a"></i>Train drop</button>
         <span style="flex:1"></span>
         <button id="startstop" disabled>Free record</button>
         <button id="cancel" class="danger" hidden>Cancel</button>
@@ -110,7 +136,7 @@
   </div>
 </main>
 <script>
-const STATE_COLOURS = ["#1e46c8", "#1e963c", "#e6c814", "#f07814", "#d21e1e", "#5a5a64"];
+const STATE_COLOURS = ["#58a6ff", "#5fed83", "#f2cc60", "#f0883e", "#e9465a", "#4a524c"];
 const STATE_NAMES = ["Still", "Walk", "Flying", "Throw", "Drop", "Handling"];
 const WINDOW_MS = 10000;
 
@@ -227,7 +253,7 @@ function renderGuide() {
   $("bigsub").textContent = `${hint} · ${Math.ceil(left / 1000)}s · next: ${next ? next[1].toLowerCase() : "done"}`;
   const bar = $("phasebar").firstElementChild;
   bar.style.width = `${100 - left / (secs * 10)}%`;
-  bar.style.background = label ? ANNO_COLOURS[label] : "#6e7681";
+  bar.style.background = label ? ANNO_COLOURS[label] : "#4a524c";
 }
 
 async function runGuide(kind) {
@@ -286,16 +312,16 @@ function draw() {
   if (samples.length) {
     const tEnd = samples[samples.length - 1][0], tStart = tEnd - WINDOW_MS;
     const x = t => (t - tStart) / WINDOW_MS * w, y = v => h - Math.min(v, 4) / 4 * h;
-    g.globalAlpha = 0.35;
+    g.globalAlpha = 0.12;
     for (let i = 0; i < samples.length - 1; i++) {
       const [t, , s] = samples[i];
       g.fillStyle = STATE_COLOURS[s] || "#333";
       g.fillRect(x(t), 0, Math.max(1, x(samples[i + 1][0]) - x(t)) + 0.5, h);
     }
     g.globalAlpha = 1;
-    g.strokeStyle = "#30363d"; g.fillStyle = "#8b949e"; g.font = "11px system-ui"; g.lineWidth = 1;
+    g.strokeStyle = "#252a27"; g.fillStyle = "#98a39b"; g.font = "11px ui-monospace, monospace"; g.lineWidth = 1;
     for (const v of [0.3, 1, 2, 3]) { g.beginPath(); g.moveTo(0, y(v)); g.lineTo(w, y(v)); g.stroke(); g.fillText(v + " g", 4, y(v) - 3); }
-    g.strokeStyle = "#e6edf3"; g.lineWidth = 1.5; g.beginPath();
+    g.strokeStyle = "#5fed83"; g.lineWidth = 1.5; g.beginPath();
     samples.forEach(([t, m], i) => i ? g.lineTo(x(t), y(m)) : g.moveTo(x(t), y(m)));
     g.stroke();
   }
@@ -305,7 +331,7 @@ requestAnimationFrame(draw);
 
 // --- Review annotation: drag across the chart, then tag what was happening. ---
 const ANNO_LABELS = ["walk", "throw", "drop", "still", "unknown"];
-const ANNO_COLOURS = {walk: "#3fb950", still: "#2f81f7", unknown: "#a371f7", throw: "#f0883e", drop: "#f85149", ignore: "#6e7681"};
+const ANNO_COLOURS = {walk: "#5fed83", still: "#58a6ff", unknown: "#a371f7", throw: "#f0883e", drop: "#e9465a", ignore: "#4a524c"};
 const ANNO_NAMES = {unknown: "other"};
 const annoName = l => l === "unknown" ? "other" : l;
 let review = null, segs = [], sel = null, dragFrom = null;
@@ -354,25 +380,25 @@ function renderReview() {
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   const d = review.data, span = review.duration_ms || 1;
   const x = t => t / span * w, y = v => h - Math.min(v, 4) / 4 * h;
-  g.fillStyle = "#0d1117"; g.fillRect(0, 0, w, h);
+  g.fillStyle = "#0a0c0b"; g.fillRect(0, 0, w, h);
   for (const s of segs) {
     g.globalAlpha = 0.28; g.fillStyle = ANNO_COLOURS[s.label];
     g.fillRect(x(s.start), 0, x(s.end) - x(s.start), h);
     g.globalAlpha = 1; g.fillRect(x(s.start), 0, x(s.end) - x(s.start), 4);
-    g.fillStyle = "#e6edf3"; g.font = "11px system-ui";
+    g.fillStyle = "#f5f5f5"; g.font = "11px ui-monospace, monospace";
     if (x(s.end) - x(s.start) > 30) g.fillText(annoName(s.label), x(s.start) + 4, 16);
   }
-  g.strokeStyle = "#30363d"; g.fillStyle = "#8b949e"; g.font = "11px system-ui"; g.lineWidth = 1;
+  g.strokeStyle = "#252a27"; g.fillStyle = "#98a39b"; g.font = "11px ui-monospace, monospace"; g.lineWidth = 1;
   for (const v of [1, 2, 3]) { g.beginPath(); g.moveTo(0, y(v)); g.lineTo(w, y(v)); g.stroke(); g.fillText(v + " g", 4, y(v) - 3); }
   const step = span > 120000 ? 10000 : span > 30000 ? 5000 : 1000;
   for (let t = step; t < span; t += step) g.fillText(t / 1000 + "s", x(t) + 2, h - 4);
-  g.strokeStyle = "#e6edf3"; g.lineWidth = 1.2; g.beginPath();
+  g.strokeStyle = "#5fed83"; g.lineWidth = 1.2; g.beginPath();
   d.forEach(([t, m], i) => i ? g.lineTo(x(t), y(m)) : g.moveTo(x(t), y(m)));
   g.stroke();
   if (sel) {
-    g.fillStyle = "rgba(255,255,255,0.18)"; g.fillRect(x(sel[0]), 0, x(sel[1]) - x(sel[0]), h);
-    g.strokeStyle = "#e6edf3"; g.strokeRect(x(sel[0]) + 0.5, 0.5, x(sel[1]) - x(sel[0]), h - 1);
-    g.fillStyle = "#e6edf3"; g.fillText(`${fmt(sel[0])} – ${fmt(sel[1])}`, x(sel[0]) + 4, 30);
+    g.fillStyle = "rgba(95,237,131,0.14)"; g.fillRect(x(sel[0]), 0, x(sel[1]) - x(sel[0]), h);
+    g.strokeStyle = "#5fed83"; g.strokeRect(x(sel[0]) + 0.5, 0.5, x(sel[1]) - x(sel[0]), h - 1);
+    g.fillStyle = "#f5f5f5"; g.fillText(`${fmt(sel[0])} – ${fmt(sel[1])}`, x(sel[0]) + 4, 30);
   }
 }
 window.addEventListener("resize", renderReview);
