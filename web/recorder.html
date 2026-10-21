@@ -389,19 +389,16 @@ const GUIDES = {
   ]).flat(), ["still", "Leave it still", "Don't touch it.", 4, "STILL"]],
 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-// Mid-activity heckles for the demo, keyed by cue. Only phases of 6 s or more get one.
-// The first line of each list always plays first; the rest are shuffled.
+// Mid-activity heckles for the demo, keyed by cue and played in order. Only phases
+// of 6 s or more get one; the walk guide has four walk phases and one of each other.
 const QUIPS = {
-  WALK: ["Is that your walk? Really? Wow.", "That's the walk of someone who just merged to main on a Friday.",
-    "Very runway. Keep going.", "Okay, that's a confident walk.", "Strutting. I respect it."],
-  LIFT: ["Badge curls. Feel the burn.", "Do you even lift?", "Is it heavy? It looks heavy."],
-  FIDGET: ["This is not a fidget spinner.", "Nervous? You seem nervous.", "It's fine. Everything's fine."],
-  SWAY: ["Big keynote energy.", "Very persuasive. Tell me more.", "You're doing the TED talk thing."],
-  WAVE: ["Nice try. Those don't count as steps.", "Faking steps? Bold move.", "Shaking it won't make you fitter."],
+  WALK: ["Is that your walk? Really? Wow.", "Work. Work it, girl.",
+    "That's the walk of someone who just merged to main on a Friday.", "Very runway. Keep going."],
+  LIFT: ["Badge curls. Feel the burn."],
+  FIDGET: ["This is not a fidget spinner."],
+  SWAY: ["Big keynote energy."],
+  WAVE: ["Nice try. Those don't count as steps."],
 };
-const DONE_LINES = {walk: "Done. Your walk has been judged. Fondly.", throw: "Done. Nothing broke. Probably.",
-  drop: "Done. The badge forgives you."};
-const shuffled = list => list.map(v => [Math.random(), v]).sort((a, b) => a[0] - b[0]).map(p => p[1]);
 const speak = text => {
   if (!window.speechSynthesis) return;
   speechSynthesis.cancel();
@@ -427,7 +424,7 @@ function renderGuide() {
 
 async function runGuide(kind) {
   const me = guide = {kind, steps: GUIDES[kind], i: 0, endsAt: 0, seen: false};
-  const quips = Object.fromEntries(Object.entries(QUIPS).map(([cue, [first, ...rest]]) => [cue, [first, ...shuffled(rest)]]));
+  const quips = Object.fromEntries(Object.entries(QUIPS).map(([cue, lines]) => [cue, [...lines]]));
   lastSaved = "";
   send({op: "start", notes: "guided " + kind});
   log(`guided ${kind} run`);
@@ -447,7 +444,7 @@ async function runGuide(kind) {
   }
   if (guide !== me) return;
   guide = null;
-  speak(DONE_LINES[kind] || "Done. Nice.");
+  speak("Done. Nice.");
   send({op: "stop"});
   render();
 }
