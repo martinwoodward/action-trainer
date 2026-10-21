@@ -15,6 +15,7 @@ from sklearn.tree import DecisionTreeClassifier
 from features import AXIS_NAMES, FEATURE_NAMES, extract_features
 
 LABELS = ("drop", "still", "throw", "unknown", "walk")
+IGNORE = "ignore"
 WINDOW_MS = 1000
 HOP_MS = 250
 MAX_DEPTH = 6
@@ -34,17 +35,44 @@ def read_session(path):
     return samples
 
 
-def window_session(samples, label, group):
+def read_segments(path):
+    """Annotated stretches from the session's JSON sidecar, if any."""
+    sidecar = path.with_suffix(".json")
+    if not sidecar.is_file():
+        return []
+    meta = json.loads(sidecar.read_text(encoding="utf-8"))
+    segments = []
+    for seg in meta.get("segments") or ():
+        label = str(seg["label"]).lower()
+        if label not in LABELS and label != IGNORE:
+            raise ValueError(f"{sidecar}: unknown segment label {label!r}")
+        segments.append((int(seg["start_ms"]), int(seg["end_ms"]), label))
+    return segments
+
+
+def window_label(start, end, label, segments):
+    """Label for [start, end): the segment that wholly contains it, else the
+    session label. Windows that straddle a segment edge are ambiguous (None)."""
+    for seg_start, seg_end, seg_label in segments:
+        if seg_start <= start and end <= seg_end:
+            return None if seg_label == IGNORE else seg_label
+        if start < seg_end and seg_start < end:
+            return None
+    return label
+
+
+def window_session(samples, label, group, segments=()):
     if not samples:
         return [], [], []
     x, y, groups = [], [], []
     start = samples[0][0]
     end = samples[-1][0]
     while start + WINDOW_MS <= end:
-        window = [axes for t_ms, axes in samples if start <= t_ms < start + WINDOW_MS]
+        target = window_label(start, start + WINDOW_MS, label, segments)
+        window = [axes for t_ms, axes in samples if start <= t_ms < start + WINDOW_MS] if target else []
         if len(window) >= 2:
             x.append(extract_features(window))
-            y.append(label)
+            y.append(target)
             groups.append(group)
         start += HOP_MS
     return x, y, groups
@@ -60,13 +88,14 @@ def load_dataset(data_dir):
             continue
         for path in sorted(label_dir.glob("*.csv")):
             samples = read_session(path)
-            sx, sy, sg = window_session(samples, label, str(path.parent.name + "/" + path.stem))
+            group = str(path.parent.name + "/" + path.stem)
+            sx, sy, sg = window_session(samples, label, group, read_segments(path))
             if sx:
                 x.extend(sx)
                 y.extend(sy)
                 groups.extend(sg)
                 sessions_by_label[label] += 1
-                samples_by_label[label] += len(sx)
+                samples_by_label.update(sy)
     if not x:
         raise ValueError(f"No complete 1-second training windows found under {data_dir}")
     return x, y, groups, dict(sessions_by_label), dict(samples_by_label)

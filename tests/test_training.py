@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,7 +7,7 @@ from pathlib import Path
 from sklearn.tree import DecisionTreeClassifier
 
 from features import FEATURE_NAMES, extract_features
-from train import train, write_model
+from train import read_segments, read_session, train, window_label, window_session, write_model
 
 
 class FeatureTests(unittest.TestCase):
@@ -22,6 +23,33 @@ class FeatureTests(unittest.TestCase):
     def test_empty_window_is_rejected(self):
         with self.assertRaises(ValueError):
             extract_features([])
+
+
+class SegmentTests(unittest.TestCase):
+    def test_segments_override_session_label_and_skip_straddling_windows(self):
+        segments = [(2000, 4000, "unknown"), (6000, 7000, "ignore")]
+        self.assertEqual(window_label(0, 1000, "walk", segments), "walk")
+        self.assertEqual(window_label(2000, 3000, "walk", segments), "unknown")
+        self.assertEqual(window_label(3000, 4000, "walk", segments), "unknown")
+        self.assertIsNone(window_label(1500, 2500, "walk", segments))
+        self.assertIsNone(window_label(6000, 7000, "walk", segments))
+        self.assertIsNone(window_label(5500, 6500, "walk", segments))
+        self.assertEqual(window_label(7000, 8000, "walk", segments), "walk")
+
+    def test_session_windows_use_sidecar_segments(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "walk" / "s.csv"
+            path.parent.mkdir()
+            with path.open("w", encoding="utf-8") as stream:
+                stream.write("t_ms,ax,ay,az,gx,gy,gz,events,state\n")
+                for t_ms in range(0, 5000, 20):
+                    stream.write(f"{t_ms},0,0,16384,0,0,0,0,0\n")
+            path.with_suffix(".json").write_text(
+                json.dumps({"segments": [{"start_ms": 2000, "end_ms": 4000, "label": "unknown"}]}))
+            _, y, _ = window_session(read_session(path), "walk", "g", read_segments(path))
+            self.assertIn("unknown", y)
+            self.assertIn("walk", y)
+            self.assertEqual(y.count("unknown"), 5)
 
 
 class TrainingTests(unittest.TestCase):

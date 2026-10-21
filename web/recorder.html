@@ -38,6 +38,14 @@
   #log { color:var(--dim); font-size:13px; max-height:120px; overflow:auto; }
   .err { color:var(--rec); }
   .state { font-weight:600; }
+  .hint { color:var(--dim); font-size:13px; margin:0 0 8px; }
+  #annolabels button { text-transform:capitalize; }
+  #annolabels button i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:-1px; }
+  #annolabels kbd { color:var(--dim); font-size:11px; margin-left:6px; }
+  #segs { font-size:13px; margin-top:8px; }
+  #segs div { display:flex; gap:10px; align-items:center; padding:3px 0; }
+  #segs i { display:inline-block; width:10px; height:10px; border-radius:2px; }
+  #segs button { padding:0 8px; font-size:12px; }
 </style>
 </head>
 <body>
@@ -91,6 +99,10 @@
     <section id="pending" hidden>
       <h2>Review recording</h2>
       <table id="summary"></table>
+      <p class="hint" id="annohint"></p>
+      <canvas id="review" style="height:220px;cursor:crosshair"></canvas>
+      <div class="row" id="annolabels"></div>
+      <div id="segs"></div>
       <div class="row"><button id="save" class="primary">Save</button><button id="discard">Discard</button></div>
     </section>
   </div>
@@ -173,6 +185,7 @@ function render() {
       ["Flights detected", p.flights + (TIMED.has(p.label) ? "" : ` (target ${p.takes})`)], ["Marks", p.marks],
       ["Lost packets", p.lost_packets], ["Ended", p.reason]];
     $("summary").innerHTML = rows.map(([k, v]) => `<tr><td style="color:var(--dim)">${k}</td><td>${esc(v)}</td></tr>`).join("");
+    if (review && $("review").width !== $("review").clientWidth * (window.devicePixelRatio || 1)) renderReview();
   }
 }
 
@@ -183,9 +196,13 @@ $("startstop").onclick = () => {
 };
 $("mark").onclick = () => send({op: "mark"});
 document.addEventListener("keydown", e => {
-  if (e.code === "Space" && e.target.tagName !== "INPUT") { e.preventDefault(); if (status && status.recording) send({op: "mark"}); }
+  if (e.target.tagName === "INPUT") return;
+  if (e.code === "Space") { e.preventDefault(); if (status && status.recording) send({op: "mark"}); return; }
+  const i = +e.key - 1;
+  if (review && !$("pending").hidden && i >= 0 && i < ANNO_LABELS.length) annotate(ANNO_LABELS[i]);
+  if (e.key === "Escape") { sel = null; renderReview(); }
 });
-$("save").onclick = () => send({op: "save"});
+$("save").onclick = () => send({op: "save", segments: segs.map(s => ({start_ms: Math.round(s.start), end_ms: Math.round(s.end), label: s.label}))});
 $("discard").onclick = () => { send({op: "discard"}); log("discarded"); };
 $("identify").onclick = () => send({op: "identify"});
 $("disconnect").onclick = () => send({op: "disconnect"});
@@ -218,6 +235,78 @@ function draw() {
 }
 requestAnimationFrame(draw);
 
+// --- Review annotation: drag across the chart, then tag what was happening. ---
+const ANNO_LABELS = ["walk", "still", "unknown", "throw", "drop", "ignore"];
+const ANNO_COLOURS = {walk: "#3fb950", still: "#2f81f7", unknown: "#a371f7", throw: "#f0883e", drop: "#f85149", ignore: "#6e7681"};
+const ANNO_NAMES = {unknown: "unknown (handling)"};
+let review = null, segs = [], sel = null, dragFrom = null;
+
+$("annolabels").innerHTML = ANNO_LABELS.map((l, i) =>
+  `<button data-l="${l}" disabled><i style="background:${ANNO_COLOURS[l]}"></i>${ANNO_NAMES[l] || l}<kbd>${i + 1}</kbd></button>`).join("");
+$("annolabels").onclick = e => { const b = e.target.closest("button"); if (b) annotate(b.dataset.l); };
+$("segs").onclick = e => { const b = e.target.closest("button[data-i]"); if (b) { segs.splice(+b.dataset.i, 1); renderReview(); } };
+
+function annotate(l) {
+  if (!sel || sel[1] - sel[0] < 50) return;
+  const [a, b] = sel;
+  segs = segs.flatMap(s => s.end <= a || s.start >= b ? [s]
+    : [s.start < a && {...s, end: a}, s.end > b && {...s, start: b}].filter(Boolean));
+  segs.push({start: a, end: b, label: l});
+  segs.sort((p, q) => p.start - q.start);
+  sel = null;
+  renderReview();
+}
+
+function reviewX(e) {
+  const r = $("review").getBoundingClientRect();
+  return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * review.duration_ms;
+}
+$("review").onmousedown = e => { if (review) { dragFrom = reviewX(e); sel = null; renderReview(); } };
+window.addEventListener("mousemove", e => { if (dragFrom !== null) { const t = reviewX(e); sel = [Math.min(dragFrom, t), Math.max(dragFrom, t)]; renderReview(); } });
+window.addEventListener("mouseup", () => { dragFrom = null; });
+
+const fmt = ms => (ms / 1000).toFixed(1) + " s";
+
+function renderReview() {
+  if (!review) return;
+  $("annohint").textContent = `Drag across the chart to select a stretch, then tag it (or press 1–6). ` +
+    `Untagged time counts as "${review.label}". Use "ignore" for anything you don't want trained.`;
+  for (const b of $("annolabels").querySelectorAll("button")) b.disabled = !sel;
+  $("segs").innerHTML = segs.map((s, i) =>
+    `<div><i style="background:${ANNO_COLOURS[s.label]}"></i><span style="text-transform:capitalize;min-width:80px">${s.label}</span>` +
+    `<span style="color:var(--dim)">${fmt(s.start)} – ${fmt(s.end)}</span><button data-i="${i}">Remove</button></div>`).join("");
+
+  const c = $("review"), dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth, h = c.clientHeight;
+  if (!w) return;
+  c.width = w * dpr; c.height = h * dpr;
+  const g = c.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const d = review.data, span = review.duration_ms || 1;
+  const x = t => t / span * w, y = v => h - Math.min(v, 4) / 4 * h;
+  g.fillStyle = "#0d1117"; g.fillRect(0, 0, w, h);
+  for (const s of segs) {
+    g.globalAlpha = 0.28; g.fillStyle = ANNO_COLOURS[s.label];
+    g.fillRect(x(s.start), 0, x(s.end) - x(s.start), h);
+    g.globalAlpha = 1; g.fillRect(x(s.start), 0, x(s.end) - x(s.start), 4);
+    g.fillStyle = "#e6edf3"; g.font = "11px system-ui";
+    if (x(s.end) - x(s.start) > 30) g.fillText(s.label, x(s.start) + 4, 16);
+  }
+  g.strokeStyle = "#30363d"; g.fillStyle = "#8b949e"; g.font = "11px system-ui"; g.lineWidth = 1;
+  for (const v of [1, 2, 3]) { g.beginPath(); g.moveTo(0, y(v)); g.lineTo(w, y(v)); g.stroke(); g.fillText(v + " g", 4, y(v) - 3); }
+  const step = span > 120000 ? 10000 : span > 30000 ? 5000 : 1000;
+  for (let t = step; t < span; t += step) g.fillText(t / 1000 + "s", x(t) + 2, h - 4);
+  g.strokeStyle = "#e6edf3"; g.lineWidth = 1.2; g.beginPath();
+  d.forEach(([t, m], i) => i ? g.lineTo(x(t), y(m)) : g.moveTo(x(t), y(m)));
+  g.stroke();
+  if (sel) {
+    g.fillStyle = "rgba(255,255,255,0.18)"; g.fillRect(x(sel[0]), 0, x(sel[1]) - x(sel[0]), h);
+    g.strokeStyle = "#e6edf3"; g.strokeRect(x(sel[0]) + 0.5, 0.5, x(sel[1]) - x(sel[0]), h - 1);
+    g.fillStyle = "#e6edf3"; g.fillText(`${fmt(sel[0])} – ${fmt(sel[1])}`, x(sel[0]) + 4, 30);
+  }
+}
+window.addEventListener("resize", renderReview);
+
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onopen = () => { $("conn").textContent = "backend connected"; };
@@ -233,8 +322,12 @@ function connect() {
       samples.push(...m.data);
       const cut = samples[samples.length - 1][0] - WINDOW_MS - 500;
       while (samples.length && samples[0][0] < cut) samples.shift();
+    } else if (m.type === "review") {
+      review = m; segs = []; sel = null;
+      requestAnimationFrame(renderReview);
     } else if (m.type === "saved") {
-      log(m.path ? "saved " + m.path : "nothing to save");
+      log(m.path ? "saved " + m.path + (segs.length ? ` (${segs.length} tagged)` : "") : "nothing to save");
+      review = null; segs = []; sel = null;
     } else if (m.type === "error") {
       log(m.message, "err");
     }

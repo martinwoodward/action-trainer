@@ -36,6 +36,7 @@ from protocol import (
 DATA_DIR = ROOT / "data"
 WEB_DIR = ROOT / "web"
 LABELS = ("throw", "drop", "still", "walk", "unknown")
+SEGMENT_LABELS = LABELS + ("ignore",)
 STATE_NAMES = ("STILL", "WALK", "FLYING", "THROW", "DROP", "HANDLING")
 FLYING = 2
 LSB_PER_G = 16384.0
@@ -65,6 +66,7 @@ class Recorder:
         self.t_ms = 0
         self.recording = None  # dict while recording
         self.pending = None  # finished recording awaiting save/discard
+        self.review_ready = False  # pending recording not yet sent to the UI
         self.live = []  # samples to push to the UI
 
     # --- scanning ----------------------------------------------------------
@@ -185,17 +187,50 @@ class Recorder:
         rec["reason"] = reason
         rec["lost_packets"] = self.lost
         self.pending = rec
+        self.review_ready = True
 
-    def save_pending(self):
-        rec, self.pending = self.pending, None
+    def review(self):
+        """Whole pending session as (t_ms from start, |a| in g, state) for annotation."""
+        rec = self.pending
         if rec is None or not rec["rows"]:
             return None
+        t0 = rec["rows"][0][0]
+        data = [
+            (row[0] - t0, round(math.sqrt(row[1] ** 2 + row[2] ** 2 + row[3] ** 2) / LSB_PER_G, 3), row[8])
+            for row in rec["rows"]
+        ]
+        return {"type": "review", "label": rec["label"], "duration_ms": data[-1][0], "data": data}
+
+    @staticmethod
+    def clean_segments(segments, duration_ms):
+        out = []
+        for seg in segments or ():
+            label = str(seg.get("label", "")).lower()
+            if label not in SEGMENT_LABELS:
+                raise RuntimeError("unknown segment label: %s" % label)
+            start = max(0, int(seg["start_ms"]))
+            end = min(duration_ms, int(seg["end_ms"]))
+            if end > start:
+                out.append({"start_ms": start, "end_ms": end, "label": label})
+        out.sort(key=lambda s: s["start_ms"])
+        for a, b in zip(out, out[1:]):
+            if b["start_ms"] < a["end_ms"]:
+                raise RuntimeError("segments overlap")
+        return out
+
+    def save_pending(self, segments=None):
+        rec = self.pending
+        if rec is None or not rec["rows"]:
+            self.pending = None
+            return None
+        t0 = rec["rows"][0][0]
+        segments = self.clean_segments(segments, rec["rows"][-1][0] - t0)
+        self.pending = None
         badge = self.badges.get(self.address, {})
         stamp = rec["started"].strftime("%Y%m%d-%H%M%S")
         folder = DATA_DIR / rec["label"]
         folder.mkdir(parents=True, exist_ok=True)
         stem = "%s_%s" % (stamp, badge.get("badge_id", "unknown"))
-        t0 = rec["rows"][0][0]
         with open(folder / (stem + ".csv"), "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(CSV_HEADER)
@@ -213,6 +248,7 @@ class Recorder:
             "takes_target": rec["takes"],
             "flights_detected": rec["flights"],
             "marks_ms": [m - t0 for m in rec["marks"]],
+            "segments": segments,
             "plushy": rec["plushy"],
             "notes": rec["notes"],
             "lost_packets": rec["lost_packets"],
@@ -285,6 +321,11 @@ class Recorder:
             if self.live:
                 batch, self.live = self.live, []
                 await self.broadcast({"type": "samples", "data": batch})
+            if self.review_ready:
+                self.review_ready = False
+                msg = self.review()
+                if msg:
+                    await self.broadcast(msg)
             now = time.time()
             if now - last_status >= 0.5:
                 last_status = now
@@ -317,7 +358,7 @@ class Recorder:
         elif op == "stop":
             self.finish_recording()
         elif op == "save":
-            path = self.save_pending()
+            path = self.save_pending(msg.get("segments"))
             await self.broadcast({"type": "saved", "path": path})
         elif op == "discard":
             self.pending = None
@@ -331,6 +372,9 @@ async def ws_handler(request):
     rec.sockets.add(ws)
     await ws.send_str(json.dumps({"type": "hello", "labels": LABELS}))
     await ws.send_str(json.dumps(rec.status()))
+    review = rec.review()
+    if review:
+        await ws.send_str(json.dumps(review))
     async for m in ws:
         if m.type != WSMsgType.TEXT:
             continue

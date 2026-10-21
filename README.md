@@ -39,13 +39,22 @@ The recorder captures five labels: `throw`, `drop`, `still`, `walk`, and
 generated model maps an `unknown` prediction to `still` as the safe default
 detected action.
 
+After you stop a recording, the review panel shows the whole session. Drag
+across the chart to select a stretch and tag it (buttons or keys 1–6), for
+example `unknown` for the times you lifted the badge up and down during a
+`walk` session, or `ignore` for set-up time. Tags are saved as `segments`
+(`start_ms`, `end_ms`, `label`) in the JSON sidecar. Untagged time keeps the
+session's label.
+
 ## Train and export
 
 ```powershell
 python train.py --data data --output dist/model.py
 ```
 
-Training windows are 1 second long with a 250 ms hop. Features are computed
+Training windows are 1 second long with a 250 ms hop. A window wholly inside
+a tagged segment takes that segment's label; windows that cross a segment edge
+or fall inside an `ignore` segment are skipped. Features are computed
 from measured timestamps and six-axis IMU samples; the decision tree is
 capped at depth 6. Grouped cross-validation keeps each recorded session wholly
 inside one fold. The command writes a self-contained, MicroPython-compatible
