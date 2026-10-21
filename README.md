@@ -33,7 +33,14 @@ still, lift it up and down), in the intended physical configuration
 (including the plushy, if that is how the badge will be used). Press **Stop**
 when you're done.
 
-The review panel then shows the whole recording. Drag across the chart to
+For a hands-off run, use **Train walk**, **Train throw** or **Train drop**
+instead. The recorder speaks timed prompts ("Start walking", "Stop. Lift it up
+and down", "Throw it"), shows them on screen and on the badge, and tags each
+stretch from the prompt that was showing. It skips the first second after each
+prompt while you react. The session saves itself when the run finishes;
+**Cancel** throws it away.
+
+With **Free record**, the review panel shows the whole recording. Drag across the chart to
 select a stretch and tag it `walk`, `throw`, `drop`, `still`, or `other`
 (buttons or keys 1–5). `other` is for lifting and handling and is stored as
 the `unknown` label; the generated model maps an `unknown` prediction to

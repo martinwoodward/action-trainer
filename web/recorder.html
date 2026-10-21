@@ -26,6 +26,10 @@
   #seconds { display:grid; grid-template-columns:repeat(5, 1fr); gap:6px; margin-bottom:10px; text-align:center; }
   #seconds div { background:var(--bg); border-radius:6px; padding:6px 2px; font-size:12px; color:var(--dim); text-transform:capitalize; }
   #seconds b { display:block; font-size:15px; color:var(--text); font-variant-numeric:tabular-nums; }
+  #guides button { padding:10px 16px; }
+  #guides button i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:8px; vertical-align:-1px; }
+  #phasebar { height:6px; background:var(--bg); border-radius:3px; margin:10px 0 4px; overflow:hidden; }
+  #phasebar i { display:block; height:100%; width:0; background:var(--accent); }
   #big { font-size:42px; font-weight:700; font-variant-numeric:tabular-nums; }
   #bigsub { color:var(--dim); }
   canvas { width:100%; height:260px; background:var(--bg); border-radius:6px; display:block; }
@@ -81,9 +85,15 @@
   </div>
   <div>
     <section>
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:16px">
-        <div><div id="big">—</div><div id="bigsub">Connect a badge, then press Record.</div></div>
-        <button id="startstop" class="primary" disabled>Record</button>
+      <div id="big">—</div><div id="bigsub">Connect a badge to start.</div>
+      <div id="phasebar" hidden><i></i></div>
+      <div class="row" id="guides" style="margin-top:12px">
+        <button data-g="walk"><i style="background:#3fb950"></i>Train walk</button>
+        <button data-g="throw"><i style="background:#f0883e"></i>Train throw</button>
+        <button data-g="drop"><i style="background:#f85149"></i>Train drop</button>
+        <span style="flex:1"></span>
+        <button id="startstop" disabled>Free record</button>
+        <button id="cancel" class="danger" hidden>Cancel</button>
       </div>
       <div style="margin-top:12px"><canvas id="plot"></canvas></div>
       <div class="legend" id="legend"></div>
@@ -138,10 +148,17 @@ function render() {
   const conn = !!status.connected, rec = status.recording, p = status.pending;
   $("connected").hidden = !conn;
   $("info").textContent = status.info + (conn ? ` · lost packets ${status.lost}` : "");
-  $("startstop").disabled = !conn && !rec;
-  $("startstop").textContent = rec ? "Stop" : "Record";
-  $("startstop").className = rec ? "danger" : "primary";
-  if (rec) {
+  const busy = !!(rec || p || guide);
+  for (const b of $("guides").querySelectorAll("button[data-g]")) { b.disabled = !conn || busy; b.hidden = !!guide; }
+  $("cancel").hidden = !guide;
+  $("startstop").hidden = !!guide;
+  $("startstop").disabled = (!conn && !rec) || (!rec && busy);
+  $("startstop").textContent = rec ? "Stop" : "Free record";
+  $("startstop").className = rec ? "danger" : "";
+  $("phasebar").hidden = !guide;
+  if (guide) {
+    renderGuide();
+  } else if (rec) {
     $("big").textContent = dur(rec.seconds);
     $("bigsub").textContent = `Recording · move however you like, then press Stop`;
   } else if (status.connecting || status.reconnecting) {
@@ -151,7 +168,8 @@ function render() {
     $("bigsub").textContent = "Tag what you did below, then save.";
   } else {
     $("big").textContent = conn ? "Ready" : "—";
-    $("bigsub").textContent = conn ? "Press Record, then walk, throw, drop or hold still." : "Connect a badge, then press Record.";
+    $("bigsub").textContent = !conn ? "Connect a badge to start."
+      : lastSaved || "Pick something to train. I'll tell you what to do and tag it for you.";
   }
   $("pending").hidden = !p;
   if (p) {
@@ -164,9 +182,83 @@ function render() {
 
 $("startstop").onclick = () => {
   if (status.recording) return send({op: "stop"});
+  lastSaved = "";
   send({op: "start"});
   log("recording");
 };
+
+// --- Guided training: timed prompts, tagged from whichever prompt was showing. ---
+// [label (null = not trained), what to say, hint, seconds, short cue for the badge screen]
+const ready = (hint, secs = 3) => [null, "Get ready", hint, secs, "READY"];
+const GUIDES = {
+  walk: [
+    ready("Hold the badge the way you'll wear it."),
+    ["still", "Stand still", "Don't move.", 5, "STILL"],
+    ["walk", "Start walking", "Walk normally.", 15, "WALK"],
+    ["unknown", "Stop. Lift it up and down", "Stand in place and raise and lower the badge.", 8, "LIFT"],
+    ["walk", "Walk again", "Walk normally.", 15, "WALK"],
+    ["unknown", "Stop. Fidget with it", "Turn it, tilt it, tap it. No steps.", 8, "FIDGET"],
+    ["walk", "Walk again", "Walk normally.", 10, "WALK"],
+    ["unknown", "Stop. Swing your arms", "Stay in place, move like you're talking.", 6, "SWAY"],
+    ["still", "Stand still", "Don't move.", 4, "STILL"],
+  ],
+  throw: [ready("Hold it, ready to throw."), ...Array.from({length: 5}, () => [
+    ["throw", "Throw it", "Toss it up and catch it.", 3, "THROW"],
+    ["unknown", "Hold it", "Hold it in your hand.", 3, "HOLD"],
+  ]).flat(), ["still", "Set it down", "Leave it still.", 4, "STILL"]],
+  drop: [ready("Hold it out over something soft."), ...Array.from({length: 5}, () => [
+    ["drop", "Drop it", "Let it fall onto something soft.", 3, "DROP"],
+    ["unknown", "Pick it up", "Pick it up and hold it out again.", 4, "PICKUP"],
+  ]).flat(), ["still", "Leave it still", "Don't touch it.", 4, "STILL"]],
+};
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const speak = text => {
+  if (!window.speechSynthesis) return;
+  speechSynthesis.cancel();
+  speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+};
+let guide = null, lastSaved = "";
+
+function renderGuide() {
+  const [label, say, hint, secs] = guide.steps[guide.i];
+  const left = Math.max(0, guide.endsAt - performance.now());
+  $("big").textContent = say;
+  const next = guide.steps[guide.i + 1];
+  $("bigsub").textContent = `${hint} · ${Math.ceil(left / 1000)}s · next: ${next ? next[1].toLowerCase() : "done"}`;
+  const bar = $("phasebar").firstElementChild;
+  bar.style.width = `${100 - left / (secs * 10)}%`;
+  bar.style.background = label ? ANNO_COLOURS[label] : "#6e7681";
+}
+
+async function runGuide(kind) {
+  const me = guide = {kind, steps: GUIDES[kind], i: 0, endsAt: 0, seen: false};
+  lastSaved = "";
+  send({op: "start", notes: "guided " + kind});
+  log(`guided ${kind} run`);
+  for (let i = 0; i < me.steps.length; i++) {
+    if (guide !== me) return;
+    const [label, say, , secs, cue] = me.steps[i];
+    me.i = i; me.endsAt = performance.now() + secs * 1000;
+    send({op: "phase", label, cue, ms: secs * 1000});
+    speak(say);
+    render();
+    while (guide === me && performance.now() < me.endsAt) { await sleep(100); renderGuide(); }
+  }
+  if (guide !== me) return;
+  guide = null;
+  speak("Done. Nice.");
+  send({op: "stop"});
+  render();
+}
+function stopGuide(reason) {
+  if (!guide) return;
+  guide = null;
+  if (window.speechSynthesis) speechSynthesis.cancel();
+  log(reason, reason === "cancelled" ? "" : "err");
+  render();
+}
+$("guides").onclick = e => { const b = e.target.closest("button[data-g]"); if (b && !b.disabled) runGuide(b.dataset.g); };
+$("cancel").onclick = () => { stopGuide("cancelled"); send({op: "cancel"}); };
 document.addEventListener("keydown", e => {
   if (e.target.tagName === "INPUT") return;
   const i = +e.key - 1;
@@ -293,7 +385,10 @@ function connect() {
     const m = JSON.parse(e.data);
     if (m.type === "status") {
       const was = status && status.connected;
-      status = m; render();
+      status = m;
+      if (guide && m.recording) guide.seen = true;
+      if (guide && guide.seen && !m.recording) stopGuide("lost the badge, run stopped");
+      render();
       if (was && !m.connected) log("badge disconnected", "err");
       if (!was && m.connected) log("connected: " + m.info);
     } else if (m.type === "samples") {
@@ -301,10 +396,17 @@ function connect() {
       const cut = samples[samples.length - 1][0] - WINDOW_MS - 500;
       while (samples.length && samples[0][0] < cut) samples.shift();
     } else if (m.type === "review") {
-      review = m; segs = []; sel = null;
+      review = m; sel = null;
+      segs = (m.segments || []).map(s => ({start: s.start_ms, end: s.end_ms, label: s.label}));
       requestAnimationFrame(renderReview);
     } else if (m.type === "saved") {
-      log(m.path ? "saved " + m.path + (segs.length ? ` (${segs.length} tagged)` : "") : "nothing to save");
+      if (m.tagged) {
+        lastSaved = "Saved " + Object.entries(m.tagged).map(([k, v]) => `${annoName(k)} ${Math.round(v)}s`).join(" · ") +
+          ". Run another, or Train & deploy.";
+        log(lastSaved);
+      } else {
+        log(m.path ? "saved " + m.path + (segs.length ? ` (${segs.length} tagged)` : "") : "nothing to save");
+      }
       review = null; segs = []; sel = null;
     } else if (m.type === "trained") {
       const acc = m.accuracy == null ? "" : ` · ${Math.round(m.accuracy * 100)}% accurate`;

@@ -46,6 +46,7 @@ DATA_DIR = ROOT / "data"
 WEB_DIR = ROOT / "web"
 LABELS = ("throw", "drop", "still", "walk", "unknown")
 SEGMENT_LABELS = LABELS + ("ignore",)
+GUIDE_REACTION_MS = 1000  # skip this long after each guided cue while the user reacts
 STATE_NAMES = ("STILL", "WALK", "FLYING", "THROW", "DROP", "HANDLING")
 FLYING = 2
 LSB_PER_G = 16384.0
@@ -226,6 +227,7 @@ class Recorder:
             "notes": notes,
             "rows": [],
             "marks": [],
+            "phases": [],
             "flights": 0,
             "prev_state": None,
             "started": datetime.now(),
@@ -235,6 +237,28 @@ class Recorder:
         rec = self.recording
         if rec is not None:
             rec["marks"].append(self.t_ms)
+
+    def phase(self, label, cue="", ms=0):
+        """Guided runs: the UI switched prompt. Stamp it on the badge clock."""
+        rec = self.recording
+        if rec is None:
+            return
+        label = label if label in SEGMENT_LABELS else None
+        rec["phases"].append({"t_ms": self.t_ms, "label": label, "cue": str(cue)[:12], "ms": int(ms)})
+
+    @staticmethod
+    def phase_segments(phases, t0, end_ms):
+        """Turn guided phases into segments, skipping the reaction time after each cue."""
+        out = []
+        for i, ph in enumerate(phases):
+            if not ph["label"]:
+                continue
+            start = ph["t_ms"] - t0 + GUIDE_REACTION_MS
+            stop = (phases[i + 1]["t_ms"] - t0) if i + 1 < len(phases) else end_ms
+            stop = min(stop, end_ms)
+            if stop - start >= 500:
+                out.append({"start_ms": max(0, start), "end_ms": stop, "label": ph["label"]})
+        return out
 
     def finish_recording(self, reason="stopped"):
         rec, self.recording = self.recording, None
@@ -246,6 +270,8 @@ class Recorder:
         rec["rate_hz"] = round((len(rows) - 1) / duration, 1) if duration else 0
         rec["reason"] = reason
         rec["lost_packets"] = self.lost
+        if rec["phases"] and rows:
+            rec["auto_segments"] = self.phase_segments(rec["phases"], rows[0][0], rows[-1][0] - rows[0][0])
         self.pending = rec
         self.review_ready = True
 
@@ -259,7 +285,7 @@ class Recorder:
             (row[0] - t0, round(math.sqrt(row[1] ** 2 + row[2] ** 2 + row[3] ** 2) / LSB_PER_G, 3), row[8])
             for row in rec["rows"]
         ]
-        return {"type": "review", "duration_ms": data[-1][0], "data": data}
+        return {"type": "review", "duration_ms": data[-1][0], "data": data, "segments": rec.get("auto_segments", [])}
 
     @staticmethod
     def clean_segments(segments, duration_ms):
@@ -307,6 +333,7 @@ class Recorder:
             "flights_detected": rec["flights"],
             "marks_ms": [m - t0 for m in rec["marks"]],
             "segments": segments,
+            "guided": [{**ph, "t_ms": ph["t_ms"] - t0} for ph in rec["phases"]],
             "notes": rec["notes"],
             "lost_packets": rec["lost_packets"],
             "end_reason": rec["reason"],
@@ -320,6 +347,10 @@ class Recorder:
         rec = self.recording
         if rec is None:
             return ""
+        if rec["phases"]:
+            ph = rec["phases"][-1]
+            left = max(0, ph["t_ms"] + ph["ms"] - self.t_ms + 999) // 1000
+            return "%s %d" % (ph["cue"], left) if ph["ms"] else ph["cue"]
         secs = (rec["rows"][-1][0] - rec["rows"][0][0]) // 1000 if len(rec["rows"]) > 1 else 0
         return "REC %ds" % secs
 
@@ -436,8 +467,22 @@ class Recorder:
             self.start_recording(msg.get("notes", ""))
         elif op == "mark":
             self.mark()
+        elif op == "phase":
+            self.phase(msg.get("label"), msg.get("cue", ""), msg.get("ms", 0))
         elif op == "stop":
             self.finish_recording()
+            pend = self.pending
+            if pend is not None and pend.get("auto_segments"):
+                segments = pend["auto_segments"]
+                path = self.save_pending(segments)
+                self.review_ready = False
+                tagged = {}
+                for seg in segments:
+                    tagged[seg["label"]] = tagged.get(seg["label"], 0) + (seg["end_ms"] - seg["start_ms"]) / 1000
+                await self.broadcast({"type": "saved", "path": path, "tagged": tagged})
+        elif op == "cancel":
+            self.recording = None
+            self.pending = None
         elif op == "save":
             path = self.save_pending(msg.get("segments"))
             await self.broadcast({"type": "saved", "path": path})
