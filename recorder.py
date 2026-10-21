@@ -42,6 +42,25 @@ from protocol import (
 )
 import train as trainer
 
+LOG_PATH = Path(__file__).parent / "data" / "recorder.log"
+RETRY_MIN_S = 2
+RETRY_MAX_S = 15
+
+
+def log(*parts):
+    line = datetime.now().strftime("%H:%M:%S ") + " ".join(str(p) for p in parts)
+    print(line)
+    try:
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with LOG_PATH.open("a") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+
+
+def describe(e):
+    return str(e) or type(e).__name__
+
 DATA_DIR = ROOT / "data"
 WEB_DIR = ROOT / "web"
 LABELS = ("throw", "drop", "still", "walk", "unknown")
@@ -61,6 +80,8 @@ class Recorder:
         self.client = None
         self.address = None
         self.target = None  # badge to stay connected to; cleared by an explicit disconnect
+        self.retry_at = 0.0
+        self.retry_delay = 0.0
         self.info = ""
         self.connecting = False
         self.last_seq = None
@@ -112,6 +133,8 @@ class Recorder:
             await client.start_notify(STREAM_UUID, self.on_stream)
             self.client = client
             self.address = address
+            self.retry_delay = 0.0
+            log("connected", self.info)
         except Exception as e:
             try:
                 await client.disconnect()
@@ -126,7 +149,10 @@ class Recorder:
         try:
             await self.connect(self.target)
         except Exception as e:
-            print("reconnect failed:", e.__cause__ or e)
+            # Back off so a wedged badge has time to restart its BLE stack.
+            self.retry_delay = min(RETRY_MAX_S, max(RETRY_MIN_S, self.retry_delay * 2))
+            self.retry_at = time.time() + self.retry_delay
+            log("reconnect failed:", describe(e.__cause__ or e), "- retrying in %ds" % self.retry_delay)
 
     def on_disconnect(self, client):
         self.loop.call_soon_threadsafe(self._handle_disconnect, client)
@@ -134,6 +160,8 @@ class Recorder:
     def _handle_disconnect(self, client=None):
         if client is not None and client is not self.client:
             return
+        if self.client is not None:
+            log("badge disconnected")
         self.client = None
         if self.recording is not None:
             self.finish_recording(reason="disconnected")
@@ -411,9 +439,9 @@ class Recorder:
             except Exception:
                 self.ping_failures += 1
                 if self.ping_failures >= 2:
-                    print("badge stopped answering, dropping link")
+                    log("badge stopped answering, dropping link")
                     await self.drop_link()
-        elif self.target and not self.connecting:
+        elif self.target and not self.connecting and time.time() >= self.retry_at:
             b = self.badges.get(self.target)
             if b and time.time() - b["seen"] < 5:
                 await self.reconnect()

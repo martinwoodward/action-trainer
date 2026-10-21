@@ -86,6 +86,13 @@ by `badge/apps/airtime/protocol.py` in `badger/home`. Keep the UUIDs, packet
 field order, and struct formats synchronized; `tests/test_stream.py` checks
 the recording packet format.
 
+The recorder pings a connected badge every 2 s and reconnects automatically,
+backing off from 2 s to 15 s between failed attempts. Connection events are
+logged with timestamps to `data/recorder.log`. The badge's CYW43 BLE stack can
+wedge (centrals connect but see no services), so the pedometer app restarts
+its BLE stack after two links that never send a command, or after 2 minutes
+without a working link.
+
 ## Development checks
 
 ```powershell
