@@ -66,6 +66,14 @@ class TrainingTests(unittest.TestCase):
             self.assertEqual(generated.predict_features([0.0] * len(FEATURE_NAMES)), "still")
             self.assertEqual(generated.predict_features([1.0] * len(FEATURE_NAMES)), "walk")
 
+    def test_generated_model_avoids_star_unpacking_unsupported_by_micropython(self):
+        model = DecisionTreeClassifier(random_state=0)
+        model.fit([[0.0] * len(FEATURE_NAMES), [1.0] * len(FEATURE_NAMES)], ["unknown", "walk"])
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "model.py"
+            write_model(model, path)
+            self.assertNotIn("*(", path.read_text())
+
     def test_training_exports_self_contained_model_and_validation_report(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

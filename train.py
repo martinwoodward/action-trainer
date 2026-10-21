@@ -197,8 +197,7 @@ def features_from_window(samples):
     return (
         accel_mean, accel_std, min(accel_mags), max(accel_mags),
         gyro_mean, gyro_std,
-        *(axis_stds[i] / (LSB_PER_G if i < 3 else LSB_PER_DPS) for i in range(6)),
-    )
+    ) + tuple(axis_stds[i] / (LSB_PER_G if i < 3 else LSB_PER_DPS) for i in range(6))
 
 
 def _classify(features):

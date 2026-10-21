@@ -74,6 +74,7 @@ class Recorder:
         self.pending = None  # finished recording awaiting save/discard
         self.review_ready = False  # pending recording not yet sent to the UI
         self.live = []  # samples to push to the UI
+        self.write_lock = asyncio.Lock()  # CoreBluetooth allows one pending write per characteristic
 
     # --- scanning ----------------------------------------------------------
     def on_adv(self, dev, adv):
@@ -139,13 +140,17 @@ class Recorder:
     async def command(self, op, arg=""):
         if self.client is None:
             raise RuntimeError("not connected")
-        await self.client.write_gatt_char(CONTROL_UUID, op + arg.encode()[:60], response=True)
+        await self.write_control(op + arg.encode()[:60])
+
+    async def write_control(self, data):
+        async with self.write_lock:
+            await asyncio.wait_for(self.client.write_gatt_char(CONTROL_UUID, data, response=True), 5)
 
     async def deploy_model(self, source):
         if self.client is None:
             raise RuntimeError("connect a badge to deploy")
         chunk = max(20, min(CONTROL_MAX, self.client.mtu_size - 3) - 1)
-        write = lambda data: self.client.write_gatt_char(CONTROL_UUID, data, response=True)
+        write = self.write_control
         await write(CMD_MODEL_BEGIN)
         for i in range(0, len(source), chunk):
             await write(CMD_MODEL_DATA + source[i:i + chunk])
