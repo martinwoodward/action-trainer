@@ -390,20 +390,30 @@ const GUIDES = {
 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 // Mid-activity lines for the demo, keyed by cue and played in order. Only phases of
-// 6 s or more get one. They start straight and escalate as the walk guide goes on:
-// walk, fidget, walk, sway, walk, lift, walk, wave.
+// 6 s or more get one. Order through the walk guide: walk, fidget, walk, sway, walk,
+// lift, walk, wave. They start as flat system prompts (robot voice) and the
+// personality leaks out as it goes. A line can be several parts, spoken back to back.
+const robot = text => ({text, pitch: 0.4, rate: 0.85});
 const QUIPS = {
-  WALK: ["Nice and steady. Just like that.", "Is that your walk? Really? Wow.",
-    "That's the walk of someone who just merged to main on a Friday.", "Work. Work it, girl."],
-  FIDGET: ["Good. Keep fiddling with it."],
-  SWAY: ["Big keynote energy."],
-  LIFT: ["Badge curls. Feel the burn."],
-  WAVE: ["Nice try. I'm a decision tree, not an idiot."],
+  WALK: [
+    [robot("Walking detected. Recording in progress.")],
+    [robot("Gait analysis complete."), "Is that your walk? Really? Wow."],
+    ["That's the walk of someone who just merged to main on a Friday."],
+    ["Work. Work it, girl."],
+  ],
+  FIDGET: [[robot("Movement logged. Please continue.")]],
+  SWAY: [["Big keynote energy."]],
+  LIFT: [["Badge curls. Feel the burn."]],
+  WAVE: [["Nice try. I'm a decision tree, not an idiot."]],
 };
-const speak = text => {
+// Speak one or more parts in sequence; a part is text or {text, pitch, rate}.
+const speak = (...parts) => {
   if (!window.speechSynthesis) return;
   speechSynthesis.cancel();
-  speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+  for (const part of parts) {
+    const {text, ...voice} = typeof part === "string" ? {text: part} : part;
+    speechSynthesis.speak(Object.assign(new SpeechSynthesisUtterance(text), voice));
+  }
 };
 let guide = null, lastSaved = "";
 const GUIDE_TILES = [["walk", "Walk", "Steps vs. just moving it"], ["throw", "Throw", "Toss it up and catch it"],
@@ -439,7 +449,7 @@ async function runGuide(kind) {
     let quipAt = secs >= 6 && quips[cue]?.length ? me.endsAt - secs * 600 : Infinity;
     while (guide === me && performance.now() < me.endsAt) {
       await sleep(100);
-      if (performance.now() >= quipAt) { quipAt = Infinity; speak(quips[cue].shift()); }
+      if (performance.now() >= quipAt) { quipAt = Infinity; speak(...quips[cue].shift()); }
       renderGuide();
     }
   }
