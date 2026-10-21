@@ -7,8 +7,8 @@ from pathlib import Path
 from sklearn.tree import DecisionTreeClassifier
 
 from features import FEATURE_NAMES, extract_features
-from train import (label_seconds, load_dataset, read_segments, read_session, train, window_label,
-                   window_session, write_model)
+from train import (assign_splits, label_seconds, load_dataset, read_segments, read_session, score_model,
+                   train, window_label, window_session, write_model)
 
 
 class FeatureTests(unittest.TestCase):
@@ -20,6 +20,18 @@ class FeatureTests(unittest.TestCase):
         self.assertAlmostEqual(values[1], 0.0)
         self.assertAlmostEqual(values[2], 1.0)
         self.assertAlmostEqual(values[3], 1.0)
+
+    def test_rhythm_features_separate_periodic_motion_from_noise_free_rest(self):
+        names = list(FEATURE_NAMES)
+        still = extract_features([(0, 0, 16384, 0, 0, 0)] * 45)
+        # Two clean 0.5 g bumps along gravity, half a window apart.
+        walk = [(0, 0, int(16384 * (1 + 0.5 * (i % 22 < 5))), 0, 0, 0) for i in range(45)]
+        stepping = extract_features(walk)
+        self.assertEqual(still[names.index("accel_peaks")], 0)
+        self.assertEqual(stepping[names.index("accel_peaks")], 3)
+        self.assertGreater(stepping[names.index("accel_autocorr")], 0.5)
+        self.assertGreater(stepping[names.index("accel_vertical_std")], 0.1)
+        self.assertAlmostEqual(stepping[names.index("accel_horizontal_std")], 0.0)
 
     def test_empty_window_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -101,6 +113,20 @@ class TrainingTests(unittest.TestCase):
             self.assertEqual(generated.predict_features([0.0] * len(FEATURE_NAMES)), "still")
             self.assertEqual(generated.predict_features([1.0] * len(FEATURE_NAMES)), "walk")
 
+    def test_generated_model_features_match_training_features(self):
+        model = DecisionTreeClassifier(random_state=0)
+        model.fit([[0.0] * len(FEATURE_NAMES), [1.0] * len(FEATURE_NAMES)], ["still", "walk"])
+        window = [(i * 37 % 900, -i * 11, 16000 + (i * 997 % 5000), i, -2 * i, 3) for i in range(44)]
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "model.py"
+            write_model(model, path)
+            scope = {}
+            exec(path.read_text(), scope)
+            self.assertNotIn("import features", path.read_text())
+            self.assertEqual(scope["FEATURE_NAMES"], FEATURE_NAMES)
+            self.assertEqual(scope["features_from_window"](window), extract_features(window))
+            self.assertIsNone(scope["features_from_window"]([]))
+
     def test_generated_model_avoids_star_unpacking_unsupported_by_micropython(self):
         model = DecisionTreeClassifier(random_state=0)
         model.fit([[0.0] * len(FEATURE_NAMES), [1.0] * len(FEATURE_NAMES)], ["unknown", "walk"])
@@ -131,6 +157,27 @@ class TrainingTests(unittest.TestCase):
             self.assertTrue(output.with_name("report.json").is_file())
             self.assertEqual(report["grouped_validation"]["status"], "available")
             self.assertEqual(report["default_action"], "still")
+            self.assertEqual(report["test"]["recordings"], ["walk/session-1"])
+
+    def test_splits_hold_out_every_fourth_recording_and_never_move(self):
+        with tempfile.TemporaryDirectory() as temp:
+            first = assign_splits(temp, [f"r/2026-{i:02}" for i in range(6)])
+            self.assertEqual([g for g, role in sorted(first.items()) if role == "test"], ["r/2026-03"])
+            # A recording that sorts earlier doesn't reshuffle earlier roles.
+            later = assign_splits(temp, list(first) + ["w/2025-99", "r/2026-06"])
+            self.assertEqual({g: later[g] for g in first}, first)
+            self.assertEqual(sum(role == "test" for role in later.values()), 2)
+
+    def test_score_model_reports_fake_and_missed_steps(self):
+        source = "def predict_window(samples):\n    return 'walk' if samples[0][0] else 'still'\n"
+        moving = [(1, 0, 0, 0, 0, 0)]
+        resting = [(0, 0, 0, 0, 0, 0)]
+        score = score_model(source, [moving, resting, moving, resting],
+                            ["walk", "walk", "unknown", "still"])
+        self.assertEqual(score["accuracy"], 0.5)
+        self.assertEqual(score["recall"]["walk"], 0.5)
+        self.assertEqual(score["missed_steps"], 0.5)
+        self.assertEqual(score["fake_steps"], 0.5)
 
 
 if __name__ == "__main__":

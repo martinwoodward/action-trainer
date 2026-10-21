@@ -1,8 +1,12 @@
 """Model upload over the control characteristic, against a fake badge."""
 import asyncio
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 import protocol
+import recorder
 from recorder import Recorder
 
 
@@ -44,6 +48,59 @@ class DeployTests(unittest.TestCase):
     def test_requires_connection(self):
         with self.assertRaises(RuntimeError):
             asyncio.run(Recorder().deploy_model(b"x"))
+
+
+class GateTests(unittest.TestCase):
+    """Train & deploy keeps the badge's model when the new one scores worse."""
+
+    def run_round(self, rec, dist, new_acc, baseline_acc, force=False):
+        def fake_train(_data, output, baseline):
+            output.write_text(f"# model {new_acc}")
+            test = {"accuracy": new_acc, "recall": {"walk": new_acc}}
+            if baseline is not None and baseline_acc is not None:
+                test["baseline"] = {"accuracy": baseline_acc, "recall": {"walk": baseline_acc}}
+            return {"test": test, "windows_per_label": {"walk": 10}}
+
+        sent = []
+
+        async def broadcast(msg):
+            sent.append(msg)
+
+        rec.broadcast = broadcast
+        with mock.patch.multiple(recorder, MODEL_PATH=dist / "model.py",
+                                 DEPLOYED_MODEL=dist / "deployed_model.py",
+                                 DEPLOYED_CARD=dist / "deployed.json"), \
+                mock.patch.object(recorder.trainer, "train", fake_train):
+            asyncio.run(rec.train_and_deploy(force))
+            return sent[-1], rec.model_card()
+
+    def test_worse_model_is_kept_back_unless_forced(self):
+        with tempfile.TemporaryDirectory() as temp:
+            dist = Path(temp)
+            rec, badge = Recorder(), FakeBadge()
+            rec.client = badge
+            msg, card = self.run_round(rec, dist, 0.9, None)
+            self.assertIsNotNone(msg["deployed"])
+            self.assertEqual(card["deployed"]["test"]["accuracy"], 0.9)
+            self.assertEqual((dist / "deployed_model.py").read_text(), "# model 0.9")
+
+            msg, card = self.run_round(rec, dist, 0.8, 0.9)
+            self.assertIsNone(msg["deployed"])
+            self.assertEqual(card["kept"]["test"]["accuracy"], 0.8)
+            self.assertEqual((dist / "deployed_model.py").read_text(), "# model 0.9")
+
+            msg, card = self.run_round(rec, dist, 0.8, 0.9, force=True)
+            self.assertIsNotNone(msg["deployed"])
+            self.assertIsNone(card["kept"])
+            self.assertEqual(card["deployed"]["previous"]["accuracy"], 0.9)
+            self.assertEqual((dist / "deployed_model.py").read_text(), "# model 0.8")
+
+            # A badge running some other model gets no gate and no stale scorecard.
+            rec.info = "pedometer v1 id=2 model=beef name=OTHER"
+            self.assertIsNone(rec.model_card()["deployed"])
+            msg, card = self.run_round(rec, dist, 0.5, 0.9)
+            self.assertIsNotNone(msg["deployed"])
+            self.assertEqual((dist / "deployed_model.py").read_text(), "# model 0.5")
 
 
 class DeadBadge:

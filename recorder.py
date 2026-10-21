@@ -63,6 +63,11 @@ def describe(e):
 
 DATA_DIR = ROOT / "data"
 WEB_DIR = ROOT / "web"
+DIST_DIR = ROOT / "dist"
+MODEL_PATH = DIST_DIR / "model.py"
+# The last model that reached a badge, and its test-set scorecard.
+DEPLOYED_MODEL = DIST_DIR / "deployed_model.py"
+DEPLOYED_CARD = DIST_DIR / "deployed.json"
 LABELS = ("throw", "drop", "still", "walk", "unknown")
 SEGMENT_LABELS = LABELS + ("ignore",)
 GUIDE_REACTION_MS = 1000  # skip this long after each guided cue while the user reacts
@@ -78,6 +83,7 @@ class Recorder:
         self.devices = {}  # address -> BLEDevice
         self.sockets = set()
         self.client = None
+        self.kept = None
         self.address = None
         self.target = None  # badge to stay connected to; cleared by an explicit disconnect
         self.retry_at = 0.0
@@ -216,18 +222,48 @@ class Recorder:
                 break
         raise RuntimeError("badge didn't accept the model (is the pedometer app up to date?)")
 
-    async def train_and_deploy(self):
-        report = await asyncio.to_thread(trainer.train, DATA_DIR, ROOT / "dist" / "model.py")
-        v = report["grouped_validation"]
-        result = {
-            "type": "trained",
+    def deployed_card(self):
+        """The last deployed scorecard, if the connected badge is running it."""
+        if not DEPLOYED_CARD.is_file():
+            return None
+        try:
+            card = json.loads(DEPLOYED_CARD.read_text(encoding="utf-8"))
+        except ValueError:
+            return None
+        if self.info and f"model={card.get('tag')}" not in self.info.split():
+            return None
+        return card
+
+    def model_card(self):
+        """Scorecard of the model on the badge, plus a rejected candidate if any."""
+        return {"deployed": self.deployed_card(), "kept": self.kept}
+
+    async def train_and_deploy(self, force=False):
+        """Train, then deploy only if the new model scores at least as well on
+        the fixed test recordings as the one already deployed (unless forced)."""
+        await self.broadcast({"type": "training"})
+        baseline_path = DEPLOYED_MODEL if self.deployed_card() else None
+        report = await asyncio.to_thread(trainer.train, DATA_DIR, MODEL_PATH, baseline_path)
+        test = dict(report["test"] or {})
+        baseline = test.pop("baseline", None)
+        if (not force and test and baseline
+                and test["accuracy"] < baseline["accuracy"]):
+            self.kept = {"test": test, "current": baseline}
+            log(f"kept deployed model: new {test['accuracy']:.0%} < current {baseline['accuracy']:.0%}")
+            await self.broadcast({"type": "trained", "deployed": None, "model": self.model_card()})
+            return
+        source = MODEL_PATH.read_bytes()
+        tag = await self.deploy_model(source)
+        DEPLOYED_MODEL.write_bytes(source)
+        DEPLOYED_CARD.write_text(json.dumps({
+            "tag": tag,
+            "deployed_at": datetime.now().isoformat(timespec="seconds"),
+            "test": test or None,
+            "previous": baseline,
             "windows": report["windows_per_label"],
-            "accuracy": v["accuracy"],
-            "deployed": None,
-        }
-        await self.broadcast(result)
-        result["deployed"] = await self.deploy_model((ROOT / "dist" / "model.py").read_bytes())
-        await self.broadcast(result)
+        }, indent=2), encoding="utf-8")
+        self.kept = None
+        await self.broadcast({"type": "trained", "deployed": tag, "model": self.model_card()})
 
     def on_stream(self, _char, data):
         seq, samples = unpack_samples(bytes(data))
@@ -418,6 +454,7 @@ class Recorder:
             }
             | {"marks": len(pend["marks"]), "samples": len(pend["rows"])},
             "seconds": self.label_seconds(),
+            "model": self.model_card(),
         }
 
     async def broadcast(self, msg):
@@ -517,7 +554,7 @@ class Recorder:
         elif op == "discard":
             self.pending = None
         elif op == "train_deploy":
-            await self.train_and_deploy()
+            await self.train_and_deploy(bool(msg.get("force")))
         await self.broadcast_status()
 
 

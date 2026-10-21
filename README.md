@@ -33,8 +33,7 @@ still, lift it up and down), in the intended physical configuration
 (including the plushy, if that is how the badge will be used). Press **Stop**
 when you're done.
 
-For a hands-off run, use **Train walk**, **Train throw** or **Train drop**
-instead. The recorder speaks timed prompts ("Start walking", "Stop. Lift it up
+For a hands-off run, pick **Walk**, **Throw** or **Drop** instead. The recorder speaks timed prompts ("Start walking", "Stop. Lift it up
 and down", "Throw it"), shows them on screen and on the badge, and tags each
 stretch from the prompt that was showing. It skips the first second after each
 prompt while you react. The session saves itself when the run finishes;
@@ -49,8 +48,7 @@ the `unknown` label; the generated model maps an `unknown` prediction to
 Sessions are saved under `data/recordings/` as a CSV plus a JSON sidecar, with
 tags stored as `segments` (`start_ms`, `end_ms`, `label`). Older sessions in
 per-label folders (`data/<label>/`) still work: their untagged time counts as
-the folder's label. The Model panel shows how many tagged seconds you have per
-label. `data/` is intentionally ignored by Git; review and curate training
+the folder's label. `data/` is intentionally ignored by Git; review and curate training
 data explicitly before sharing or committing it.
 
 ## Train and export
@@ -62,22 +60,36 @@ python train.py --data data --output dist/model.py
 Training windows are 1 second long with a 250 ms hop. A window wholly inside
 a tagged segment takes that segment's label; windows that cross a segment edge,
 fall inside an `ignore` segment, or sit in untagged time of a
-`data/recordings/` session are skipped. Features are computed
-from measured timestamps and six-axis IMU samples; the decision tree is
-capped at depth 6. Grouped cross-validation keeps each recorded session wholly
-inside one fold. The command writes a self-contained, MicroPython-compatible
-`model.py` and a training report beside it. At least two sessions per class
-are needed for grouped cross-validation; the model can still be fit with fewer
-sessions, but the report will flag validation as unavailable.
+`data/recordings/` session are skipped. Features come from the six-axis IMU
+samples in each window: magnitude and per-axis spread, plus rhythm features
+that separate steps from other movement (autocorrelation at step-like lags,
+peak count and regularity, motion along vs. across gravity, and jerk). The
+decision tree is capped at depth 6.
+
+Every fourth recording, in time order, is held back as a fixed test set and
+never trained on. Roles are stored in `data/splits.json` and don't change once
+assigned, so test scores are comparable from one training run to the next. The
+exported `model.py` is run on the test windows exactly as the badge would run
+it, and `dist/report.json` records overall accuracy plus how often it spots
+walking and ignores other movement. Grouped cross-validation over all
+recordings is also reported for reference.
+
+`model.py` embeds `features.py` directly, so the badge and the trainer always
+compute the same features. Keep `features.py` plain MicroPython (only `math`).
 
 `predict_window(samples)` accepts an iterable of six-element tuples
 `(ax, ay, az, gx, gy, gz)` in the same raw IMU units streamed by the badge. It
 returns one of `still`, `walk`, `throw`, or `drop`; a learned `unknown` leaf
 and empty windows are mapped to `still`.
 
-The generated artifact is not automatically deployed. Copy the reviewed
-`model.py` into the target app in `badger/home` and use that app's deployment
-workflow. This keeps model generation separate from badge firmware changes.
+In the recorder, **Train & deploy** trains, scores the new model and the one
+already on the badge against the same test recordings, and only sends the new
+one if it scores at least as well. Otherwise it keeps the current model and
+offers **Deploy anyway**. The deployed model and its scorecard are kept in
+`dist/deployed_model.py` and `dist/deployed.json`.
+
+To ship a model with an app, copy the reviewed `model.py` into the target app
+in `badger/home` and use that app's deployment workflow.
 
 ## BLE protocol
 

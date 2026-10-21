@@ -48,11 +48,17 @@
   header img { width:36px; height:36px; }
   header h1 { font-size:24px; font-weight:600; letter-spacing:-.02em; margin:0; font-stretch:87.5%; }
   #conn { margin-left:auto; font:500 11px/1 var(--mono); text-transform:uppercase; letter-spacing:.14em; color:var(--dim); }
-  #theme { padding:0; width:36px; height:36px; display:grid; place-items:center; color:var(--dim); }
-  #theme svg { width:18px; height:18px; }
+  #conn:empty + * { margin-left:auto; }
+  .icon { padding:0; width:36px; height:36px; display:grid; place-items:center; color:var(--dim); position:relative; }
+  .icon svg { width:18px; height:18px; }
+  #logbtn.alert::after { content:""; position:absolute; top:7px; right:7px; width:7px; height:7px; border-radius:50%; background:var(--rec); }
+  .pop { position:absolute; z-index:10; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    box-shadow:0 18px 50px rgba(0,0,0,.28); padding:14px; }
+  #logpop { position:fixed; top:4.9rem; right:24px; width:min(460px, calc(100vw - 48px)); }
   #theme .sun, :root.light #theme .moon { display:none; }
   :root.light #theme .sun { display:block; }
-  main { display:grid; grid-template-columns: 340px 1fr; gap:20px; padding:24px; max-width:1400px; margin:0 auto; }
+  main { display:grid; grid-template-columns: minmax(0, 1fr) 320px; gap:20px; padding:24px; max-width:1400px; margin:0 auto; align-items:start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
   section { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:18px; margin-bottom:20px;
     box-shadow:var(--shadow); }
   h2 { font:500 11px/1 var(--mono); text-transform:uppercase; letter-spacing:.14em; color:var(--dim); margin:0 0 14px; }
@@ -69,26 +75,54 @@
   input[type=text], input[type=number] { font:inherit; color:var(--text); background:var(--inset); border:1px solid var(--line);
     border-radius:calc(var(--radius) - 2px); padding:7px 10px; }
   input:focus { outline:none; border-color:var(--accent); }
-  .badge { display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-top:1px solid var(--line); gap:8px; }
-  .badge:first-child { border-top:0; }
-  .badge small { color:var(--dim); display:block; font:12px/1.4 var(--mono); }
+  .badge { display:flex; justify-content:space-between; align-items:center; padding:8px 0; gap:8px; }
+  .badge small, .sub { color:var(--dim); font:12px/1.4 var(--mono); }
+  .badge.me { padding-top:0; }
+  #badges .row + .badge { border-top:1px solid var(--line); margin-top:8px; padding-top:12px; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--line); flex:none; }
+  .dot.on { background:var(--accent); box-shadow:0 0 10px var(--accent-glow); }
+  .dot.wait { background:#f2cc60; animation:pulse 1s infinite alternate; }
+  @keyframes pulse { to { opacity:.3; } }
+  .who { display:flex; gap:10px; align-items:center; min-width:0; }
+  .name { background:none; border:0; padding:2px 4px; margin-left:-4px; font-weight:600; font-size:16px; display:inline-flex; gap:6px; align-items:center; }
+  .name svg { width:13px; height:13px; color:var(--dim); opacity:0; transition:opacity .15s; }
+  .name:hover svg, .name:focus-visible svg { opacity:1; }
+  .name:hover:not(:disabled) { background:var(--control-hover); }
+  button.small { padding:5px 10px; font-size:13px; }
+  .ghost { background:none; }
+  [hidden] { display:none !important; }
+  #renamepop { width:260px; display:flex; gap:8px; }
+  #renamepop input { flex:1; min-width:0; }
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px; }
-  #seconds { display:grid; grid-template-columns:repeat(5, 1fr); gap:6px; margin-bottom:12px; text-align:center; }
-  #seconds div { background:var(--inset); border:1px solid var(--line); border-radius:calc(var(--radius) - 4px); padding:8px 2px;
-    font:10px/1.2 var(--mono); letter-spacing:.08em; color:var(--dim); text-transform:uppercase; }
-  #seconds b { display:block; font:600 14px/1.4 var(--mono); text-transform:none; letter-spacing:0; white-space:nowrap; color:var(--text); font-variant-numeric:tabular-nums; }
-  #guides button { padding:11px 18px; }
-  #guides button i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:8px; vertical-align:-1px; }
-  #phasebar { height:6px; background:var(--inset); border-radius:3px; margin:12px 0 4px; overflow:hidden; }
+  #overall { display:flex; align-items:baseline; gap:10px; }
+  #overall b { font-size:40px; font-weight:700; letter-spacing:-.03em; font-stretch:87.5%; font-variant-numeric:tabular-nums; }
+  .delta { font:600 13px var(--mono); }
+  .delta.up { color:var(--accent); } .delta.down { color:var(--danger-fg); }
+  .bars { display:grid; gap:10px; margin:14px 0 16px; }
+  .bar { display:grid; grid-template-columns:1fr auto; gap:4px 10px; font-size:13px; }
+  .bar span:nth-child(2) { font:600 13px var(--mono); font-variant-numeric:tabular-nums; }
+  .bar .track { grid-column:1 / -1; height:6px; border-radius:3px; background:var(--inset); border:1px solid var(--line); overflow:hidden; }
+  .bar .track i { display:block; height:100%; border-radius:3px; }
+  #kept { background:var(--danger-bg); border-radius:calc(var(--radius) - 2px); padding:10px 12px; font-size:13px; margin-bottom:12px; }
+  #kept button { margin-top:8px; }
+  .wide { width:100%; padding:11px 14px; }
+  .promptrow { display:flex; gap:16px; align-items:flex-start; justify-content:space-between; }
+  #guides { display:grid; grid-template-columns:repeat(3, 1fr); gap:12px; margin-top:20px; }
+  .tile { text-align:left; padding:16px 18px; display:grid; gap:4px; }
+  .tile b { font-size:18px; display:flex; align-items:center; gap:10px; }
+  .tile b i { width:12px; height:12px; border-radius:4px; }
+  .tile span { color:var(--dim); font-size:13px; }
+  #phasebar { height:8px; background:var(--inset); border-radius:4px; margin:18px 0 4px; overflow:hidden; }
   #phasebar i { display:block; height:100%; width:0; background:var(--accent); box-shadow:0 0 12px var(--accent-glow); }
-  #big { font-size:48px; font-weight:700; letter-spacing:-.03em; font-stretch:87.5%; font-variant-numeric:tabular-nums; }
-  #bigsub { color:var(--dim); }
+  #big { font-size:56px; line-height:1.1; font-weight:700; letter-spacing:-.03em; font-stretch:87.5%; font-variant-numeric:tabular-nums; }
+  #bigsub { color:var(--dim); font-size:16px; margin-top:4px; }
+  #plot { height:340px; }
   canvas { width:100%; height:260px; background:var(--inset); border:1px solid var(--line); border-radius:calc(var(--radius) - 2px); display:block; }
-  .legend { display:flex; gap:14px; font:11px/1 var(--mono); color:var(--dim); margin-top:10px; }
+  .legend { display:flex; gap:14px; flex-wrap:wrap; font:11px/1 var(--mono); color:var(--dim); margin-top:10px; }
   .legend i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
   #pending table { border-collapse:collapse; margin-bottom:10px; font-family:var(--mono); font-size:13px; }
   #pending td { padding:3px 14px 3px 0; }
-  #log { color:var(--dim); font:12px/1.6 var(--mono); max-height:140px; overflow:auto; }
+  #log { color:var(--dim); font:12px/1.6 var(--mono); max-height:50vh; overflow:auto; }
   .err { color:var(--rec); }
   .state { font-weight:600; color:var(--accent); }
   .hint { color:var(--dim); font-size:13px; margin:0 0 10px; }
@@ -102,51 +136,22 @@
 </style>
 </head>
 <body>
-<header><img src="https://badger.github.io/favicon.svg" alt=""><h1>Action Trainer</h1><span id="conn">connecting to backend…</span><button id="theme" title="Toggle light/dark" aria-label="Toggle light/dark"><svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg><svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button></header>
+<header><img src="https://badger.github.io/favicon.svg" alt=""><h1>Action Trainer</h1><span id="conn">connecting to backend…</span><button id="logbtn" class="icon ghost" title="Log" aria-label="Log"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></button><button id="theme" class="icon ghost" title="Toggle light/dark" aria-label="Toggle light/dark"><svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg><svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button></header>
+<div id="logpop" class="pop" hidden><h2>Log</h2><div id="log"></div></div>
+<div id="renamepop" class="pop" hidden><input id="newname" type="text" maxlength="16" placeholder="Badge name"><button id="rename" class="primary">Save</button></div>
 <main>
   <div>
     <section>
-      <h2>Badges</h2>
-      <div id="badges"><small style="color:var(--dim)">Scanning… start the airtime app on a badge.</small></div>
-    </section>
-    <section id="connected" hidden>
-      <h2>Connected badge</h2>
-      <div id="info" style="color:var(--dim);font-size:13px;word-break:break-all"></div>
-      <div class="row">
-        <button id="identify">Identify</button>
-        <button id="disconnect">Disconnect</button>
+      <div class="promptrow">
+        <div><div id="big">—</div><div id="bigsub">Connect a badge to start.</div></div>
+        <div class="row" style="margin:6px 0 0;flex-wrap:nowrap">
+          <button id="startstop" class="small ghost" disabled>Free record</button>
+          <button id="cancel" class="danger" hidden>Cancel</button>
+        </div>
       </div>
-      <div class="row">
-        <input id="newname" type="text" maxlength="16" placeholder="New name" style="flex:1">
-        <button id="rename">Rename</button>
-      </div>
-    </section>
-    <section>
-      <h2>Model</h2>
-      <div id="seconds"></div>
-      <div class="row" style="align-items:center">
-        <button id="traindeploy" class="primary">Train &amp; deploy</button>
-        <span id="modelstatus" style="color:var(--dim);font-size:13px"></span>
-      </div>
-    </section>
-    <section>
-      <h2>Log</h2>
-      <div id="log"></div>
-    </section>
-  </div>
-  <div>
-    <section>
-      <div id="big">—</div><div id="bigsub">Connect a badge to start.</div>
       <div id="phasebar" hidden><i></i></div>
-      <div class="row" id="guides" style="margin-top:12px">
-        <button data-g="walk"><i style="background:#5fed83"></i>Train walk</button>
-        <button data-g="throw"><i style="background:#f0883e"></i>Train throw</button>
-        <button data-g="drop"><i style="background:#e9465a"></i>Train drop</button>
-        <span style="flex:1"></span>
-        <button id="startstop" disabled>Free record</button>
-        <button id="cancel" class="danger" hidden>Cancel</button>
-      </div>
-      <div style="margin-top:12px"><canvas id="plot"></canvas></div>
+      <div id="guides"></div>
+      <div style="margin-top:20px"><canvas id="plot"></canvas></div>
       <div class="legend" id="legend"></div>
     </section>
     <section id="pending" hidden>
@@ -157,6 +162,19 @@
       <div class="row" id="annolabels"></div>
       <div id="segs"></div>
       <div class="row"><button id="save" class="primary">Save</button><button id="discard">Discard</button></div>
+    </section>
+  </div>
+  <div>
+    <section>
+      <h2>Badge</h2>
+      <div id="badges"><span class="sub">Scanning for badges…</span></div>
+    </section>
+    <section>
+      <h2>Model on badge</h2>
+      <div id="score"></div>
+      <div id="kept" hidden></div>
+      <button id="traindeploy" class="primary wide" disabled>Train &amp; deploy</button>
+      <div id="modelstatus" class="sub" style="margin-top:8px;text-align:center"></div>
     </section>
   </div>
 </main>
@@ -186,43 +204,122 @@ let ws, status = null, samples = [];
 const $ = id => document.getElementById(id);
 const send = msg => ws && ws.readyState === 1 && ws.send(JSON.stringify(msg));
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
-const log = (text, cls) => { const d = document.createElement("div"); d.textContent = new Date().toLocaleTimeString() + "  " + text; if (cls) d.className = cls; $("log").prepend(d); };
+const log = (text, cls) => {
+  const d = document.createElement("div"); d.textContent = new Date().toLocaleTimeString() + "  " + text;
+  if (cls) d.className = cls;
+  $("log").prepend(d);
+  if (cls === "err" && $("logpop").hidden) $("logbtn").classList.add("alert");
+};
+function togglePop(pop, anchor) {
+  const open = pop.hidden;
+  for (const p of document.querySelectorAll(".pop")) p.hidden = true;
+  if (!open) return false;
+  pop.hidden = false;
+  if (anchor) {
+    const r = anchor.getBoundingClientRect();
+    pop.style.left = Math.min(r.left + scrollX, innerWidth - pop.offsetWidth - 16) + "px";
+    pop.style.top = r.bottom + scrollY + 6 + "px";
+  }
+  return true;
+}
+document.addEventListener("mousedown", e => {
+  if (!e.target.closest(".pop, #logbtn, .name")) for (const p of document.querySelectorAll(".pop")) p.hidden = true;
+});
+$("logbtn").onclick = () => { togglePop($("logpop")); $("logbtn").classList.remove("alert"); };
 
 $("legend").innerHTML = STATE_NAMES.map((n, i) => `<span><i style="background:${STATE_COLOURS[i]}"></i>${n}</span>`).join("") + `<span>line = |a| (g)</span>`;
 
-const SECONDS_LABELS = [["walk", "walk"], ["throw", "throw"], ["drop", "drop"], ["still", "still"], ["unknown", "other"]];
 const dur = s => s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`;
-function renderSeconds() {
-  const secs = status ? status.seconds : {};
-  $("seconds").innerHTML = SECONDS_LABELS.map(([k, name]) => `<div><b>${dur(secs[k] || 0)}</b>${name}</div>`).join("");
-}
 
+// One card: the badge you're on (click its name to rename), then any others nearby.
 function renderBadges() {
-  if (!status.badges.length) return;
-  $("badges").innerHTML = status.badges.map(b => {
-    const isConn = status.connected === b.address;
-    const stale = !isConn && b.age > 5;
-    const where = isConn ? "connected" : stale ? `not seen ${Math.round(b.age)}s` : `<span class="state">${esc(b.state)}</span>`;
-    const action = isConn ? "<small>●</small>"
-      : `<button data-a="${esc(b.address)}" ${status.connected || status.connecting ? "disabled" : ""}>Connect</button>`;
-    return `<div class="badge"><div><b>${esc(b.name)}</b> <small>${esc(b.badge_id)} · ${b.rssi} dBm · ${where}</small></div>${action}</div>`;
+  const mine = status.connected || status.connecting || status.reconnecting;
+  const me = status.badges.find(b => b.address === mine);
+  let html = "";
+  if (mine) {
+    const conn = !!status.connected;
+    const what = conn ? `Connected · ${me ? me.rssi + " dBm · " : ""}lost ${status.lost}`
+      : status.connecting ? "Connecting…" : "Reconnecting…";
+    html += `<div class="badge me"><div class="who"><span class="dot ${conn ? "on" : "wait"}"></span><div>` +
+      `<button class="name" title="${esc(conn ? "Rename · " + status.info : "")}" ${conn ? "" : "disabled"}>${esc(me ? me.name : "Badge")}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>` +
+      `<div class="sub">${what}</div></div></div></div>` +
+      `<div class="row" style="margin-top:4px"><button class="small" data-op="identify" ${conn ? "" : "disabled"}>Identify</button>` +
+      `<button class="small ghost" data-op="disconnect">Disconnect</button></div>`;
+  }
+  const others = status.badges.filter(b => b.address !== mine);
+  html += others.map(b => {
+    const where = b.age > 5 ? `not seen ${Math.round(b.age)}s` : `${b.rssi} dBm`;
+    return `<div class="badge"><div class="who"><span class="dot"></span><div><b>${esc(b.name)}</b><div class="sub">${where}</div></div></div>` +
+      `<button class="small" data-a="${esc(b.address)}" ${mine ? "disabled" : ""}>Connect</button></div>`;
   }).join("");
+  $("badges").innerHTML = html || `<span class="sub">Scanning for badges… open the pedometer app on one.</span>`;
 }
-$("badges").onclick = e => { const b = e.target.closest("button[data-a]"); if (b) { send({op: "connect", address: b.dataset.a}); log("connecting to " + b.dataset.a + "…"); } };
+$("badges").onclick = e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.a) { send({op: "connect", address: b.dataset.a}); log("connecting to " + b.dataset.a + "…"); }
+  else if (b.dataset.op) send({op: b.dataset.op});
+  else if (b.classList.contains("name") && togglePop($("renamepop"), b)) {
+    const me = status.badges.find(x => x.address === status.connected);
+    $("newname").value = me ? me.name : "";
+    $("newname").select();
+  }
+};
+function rename() {
+  const n = $("newname").value.trim();
+  if (n) { send({op: "rename", name: n}); log("renamed to " + n); }
+  $("renamepop").hidden = true;
+}
+$("rename").onclick = rename;
+$("newname").onkeydown = e => { if (e.key === "Enter") rename(); if (e.key === "Escape") $("renamepop").hidden = true; };
+
+// Scorecard: how the badge's model does on recordings it never trained on.
+const pct = v => Math.round(v * 100) + "%";
+const SCORE_ROWS = [["walk", "Spots walking", "#5fed83"], ["not_walk", "Ignores other movement", "#58a6ff"],
+  ["throw", "Throws", "#f0883e"], ["drop", "Drops", "#e9465a"]];
+function delta(now, before) {
+  if (before == null) return "";
+  const d = Math.round((now - before) * 100);
+  return d ? `<span class="delta ${d > 0 ? "up" : "down"}">${d > 0 ? "+" : ""}${d}</span>` : "";
+}
+function renderModel() {
+  const m = status.model || {}, card = m.deployed, test = card && card.test;
+  if (!test) {
+    $("score").innerHTML = `<p class="hint">${card ? "Deployed. Record a few more runs and I'll hold some back to score it."
+      : "Record a few runs, then train. I'll score it on recordings it never saw."}</p>`;
+  } else {
+    const prev = card.previous;
+    $("score").innerHTML = `<div id="overall"><b>${pct(test.accuracy)}</b>${delta(test.accuracy, prev && prev.accuracy)}</div>` +
+      `<div class="sub">right on ${test.recordings ? test.recordings.length : ""} held-back recordings</div><div class="bars">` +
+      SCORE_ROWS.filter(([k]) => test.recall[k] != null).map(([k, name, colour]) =>
+        `<div class="bar"><span>${name} ${delta(test.recall[k], prev && prev.recall[k])}</span><span>${pct(test.recall[k])}</span>` +
+        `<div class="track"><i style="width:${pct(test.recall[k])};background:${colour}"></i></div></div>`).join("") + `</div>`;
+  }
+  const kept = m.kept;
+  $("kept").hidden = !kept;
+  if (kept) $("kept").innerHTML = `New model scored ${pct(kept.test.accuracy)}, below the ${pct(kept.current.accuracy)} on your badge, so I kept the current one.` +
+    `<br><button class="small" id="force">Deploy anyway</button>`;
+}
+$("kept").onclick = e => { if (e.target.id === "force") trainDeploy(true); };
+function trainDeploy(force) {
+  $("traindeploy").disabled = true;
+  $("modelstatus").textContent = "Training…";
+  send({op: "train_deploy", force});
+}
 
 function render() {
   renderBadges();
-  renderSeconds();
+  renderModel();
   const conn = !!status.connected, rec = status.recording, p = status.pending;
-  $("connected").hidden = !conn;
-  $("info").textContent = status.info + (conn ? ` · lost packets ${status.lost}` : "");
   const busy = !!(rec || p || guide);
-  for (const b of $("guides").querySelectorAll("button[data-g]")) { b.disabled = !conn || busy; b.hidden = !!guide; }
+  for (const b of $("guides").querySelectorAll("button[data-g]")) b.disabled = !conn || busy;
+  $("guides").hidden = !!guide || !!rec;
+  $("traindeploy").disabled = $("modelstatus").textContent === "Training…" || !conn;
   $("cancel").hidden = !guide;
   $("startstop").hidden = !!guide;
   $("startstop").disabled = (!conn && !rec) || (!rec && busy);
   $("startstop").textContent = rec ? "Stop" : "Free record";
-  $("startstop").className = rec ? "danger" : "";
+  $("startstop").className = rec ? "danger" : "small ghost";
   $("phasebar").hidden = !guide;
   if (guide) {
     renderGuide();
@@ -286,6 +383,11 @@ const speak = text => {
   speechSynthesis.speak(new SpeechSynthesisUtterance(text));
 };
 let guide = null, lastSaved = "";
+const GUIDE_TILES = [["walk", "Walk", "Steps vs. just moving it"], ["throw", "Throw", "Toss it up and catch it"],
+  ["drop", "Drop", "Let it fall onto something soft"]];
+$("guides").innerHTML = GUIDE_TILES.map(([k, name, hint]) =>
+  `<button class="tile" data-g="${k}" disabled><b><i style="background:${({walk: "#5fed83", throw: "#f0883e", drop: "#e9465a"})[k]}"></i>${name}</b>` +
+  `<span>${hint} · ${dur(GUIDES[k].reduce((t, step) => t + step[3], 0))}</span></button>`).join("");
 
 function renderGuide() {
   const [label, say, hint, secs] = guide.steps[guide.i];
@@ -335,14 +437,7 @@ document.addEventListener("keydown", e => {
 });
 $("save").onclick = () => send({op: "save", segments: segs.map(s => ({start_ms: Math.round(s.start), end_ms: Math.round(s.end), label: s.label}))});
 $("discard").onclick = () => { send({op: "discard"}); log("discarded"); };
-$("traindeploy").onclick = () => {
-  $("traindeploy").disabled = true;
-  $("modelstatus").textContent = "Training…";
-  send({op: "train_deploy"});
-};
-$("identify").onclick = () => send({op: "identify"});
-$("disconnect").onclick = () => send({op: "disconnect"});
-$("rename").onclick = () => { const n = $("newname").value.trim(); if (n) { send({op: "rename", name: n}); log("renamed to " + n); $("newname").value = ""; } };
+$("traindeploy").onclick = () => trainDeploy(false);
 
 function draw() {
   const c = $("plot"), dpr = window.devicePixelRatio || 1;
@@ -447,7 +542,7 @@ window.addEventListener("resize", renderReview);
 
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
-  ws.onopen = () => { $("conn").textContent = "backend connected"; };
+  ws.onopen = () => { $("conn").textContent = ""; };
   ws.onclose = () => { $("conn").textContent = "backend disconnected, retrying…"; setTimeout(connect, 1000); };
   ws.onmessage = e => {
     const m = JSON.parse(e.data);
@@ -476,19 +571,20 @@ function connect() {
         log(m.path ? "saved " + m.path + (segs.length ? ` (${segs.length} tagged)` : "") : "nothing to save");
       }
       review = null; segs = []; sel = null;
+    } else if (m.type === "training") {
+      $("modelstatus").textContent = "Training…";
     } else if (m.type === "trained") {
-      const acc = m.accuracy == null ? "" : ` · ${Math.round(m.accuracy * 100)}% accurate`;
-      const counts = Object.entries(m.windows).map(([k, v]) => `${k} ${v}`).join(", ");
-      $("modelstatus").textContent = m.deployed ? `On badge${acc}` : `Trained${acc}, sending to badge…`;
-      if (m.deployed) { $("traindeploy").disabled = false; log(`model deployed (${counts}${acc})`); }
+      status.model = m.model;
+      $("modelstatus").textContent = m.deployed ? "Deployed just now" : "";
+      log(m.deployed ? `model ${m.deployed} deployed` : "new model scored lower, kept the current one");
+      render();
     } else if (m.type === "error") {
       log(m.message, "err");
-      if ($("traindeploy").disabled) { $("traindeploy").disabled = false; $("modelstatus").textContent = "Failed, see log"; }
+      if ($("modelstatus").textContent === "Training…") { $("modelstatus").textContent = "Failed: " + m.message; render(); }
     }
   };
 }
 connect();
-renderSeconds();
 </script>
 </body>
 </html>
