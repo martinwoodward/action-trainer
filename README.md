@@ -80,7 +80,9 @@ compute the same features. Keep `features.py` plain MicroPython (only `math`).
 `predict_window(samples)` accepts an iterable of six-element tuples
 `(ax, ay, az, gx, gy, gz)` in the same raw IMU units streamed by the badge. It
 returns one of `still`, `walk`, `throw`, or `drop`; a learned `unknown` leaf
-and empty windows are mapped to `still`.
+and empty windows are mapped to `still`. Call it once per hop: it only reports
+`walk` after `WALK_CONFIRM` (2) back-to-back walk windows, which keeps waving
+and handling the badge from being counted as steps.
 
 In the recorder, **Train & deploy** trains, scores the new model and the one
 already on the badge against the same test recordings, and only sends the new

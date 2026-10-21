@@ -7,8 +7,8 @@ from pathlib import Path
 from sklearn.tree import DecisionTreeClassifier
 
 from features import FEATURE_NAMES, extract_features
-from train import (assign_splits, label_seconds, load_dataset, read_segments, read_session, score_model,
-                   train, window_label, window_session, write_model)
+from train import (WALK_CONFIRM, assign_splits, label_seconds, load_dataset, model_source, read_segments,
+                   read_session, score_model, train, window_label, window_session, write_model)
 
 
 class FeatureTests(unittest.TestCase):
@@ -112,6 +112,18 @@ class TrainingTests(unittest.TestCase):
             self.assertEqual(generated.predict_window([]), "still")
             self.assertEqual(generated.predict_features([0.0] * len(FEATURE_NAMES)), "still")
             self.assertEqual(generated.predict_features([1.0] * len(FEATURE_NAMES)), "walk")
+
+    def test_generated_model_needs_back_to_back_walk_windows(self):
+        model = DecisionTreeClassifier(random_state=0)
+        model.fit([[0.0] * len(FEATURE_NAMES), [1.0] * len(FEATURE_NAMES)], ["still", "walk"])
+        scope = {}
+        exec(model_source(model), scope)
+        scope["features_from_window"] = lambda samples: samples[0][0]
+        scope["predict_features"] = lambda action: action
+        calls = [scope["predict_window"]([("walk",)]) for _ in range(WALK_CONFIRM)]
+        self.assertEqual(calls, ["still"] * (WALK_CONFIRM - 1) + ["walk"])
+        self.assertEqual(scope["predict_window"]([("still",)]), "still")
+        self.assertEqual(scope["predict_window"]([("walk",)]), "still" if WALK_CONFIRM > 1 else "walk")
 
     def test_generated_model_features_match_training_features(self):
         model = DecisionTreeClassifier(random_state=0)
