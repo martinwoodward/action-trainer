@@ -389,6 +389,18 @@ const GUIDES = {
   ]).flat(), ["still", "Leave it still", "Don't touch it.", 4, "STILL"]],
 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// Mid-activity heckles for the demo, keyed by cue. Only phases of 6 s or more get one.
+const QUIPS = {
+  WALK: ["Is that your walk? Really? Wow.", "Very runway. Keep going.", "Okay, that's a confident walk.",
+    "Ten thousand steps, here we come.", "Nobody's watching. Probably.", "Strutting. I respect it."],
+  LIFT: ["Is it heavy? It looks heavy.", "Badge curls. Feel the burn.", "Do you even lift?"],
+  FIDGET: ["Nervous? You seem nervous.", "This is not a fidget spinner.", "It's fine. Everything's fine."],
+  SWAY: ["Very persuasive. Tell me more.", "Big keynote energy.", "You're doing the TED talk thing."],
+  WAVE: ["Nice try. I'm onto you.", "Faking steps? Bold move.", "I see what you're doing."],
+};
+const DONE_LINES = {walk: "Done. Your walk has been judged. Fondly.", throw: "Done. Nothing broke. Probably.",
+  drop: "Done. The badge forgives you."};
+const pick = list => list.splice(Math.floor(Math.random() * list.length), 1)[0];
 const speak = text => {
   if (!window.speechSynthesis) return;
   speechSynthesis.cancel();
@@ -414,6 +426,7 @@ function renderGuide() {
 
 async function runGuide(kind) {
   const me = guide = {kind, steps: GUIDES[kind], i: 0, endsAt: 0, seen: false};
+  const quips = Object.fromEntries(Object.entries(QUIPS).map(([cue, lines]) => [cue, [...lines]]));
   lastSaved = "";
   send({op: "start", notes: "guided " + kind});
   log(`guided ${kind} run`);
@@ -424,11 +437,16 @@ async function runGuide(kind) {
     send({op: "phase", label, cue, ms: secs * 1000});
     speak(say);
     render();
-    while (guide === me && performance.now() < me.endsAt) { await sleep(100); renderGuide(); }
+    let quipAt = secs >= 6 && quips[cue]?.length ? me.endsAt - secs * 600 : Infinity;
+    while (guide === me && performance.now() < me.endsAt) {
+      await sleep(100);
+      if (performance.now() >= quipAt) { quipAt = Infinity; speak(pick(quips[cue])); }
+      renderGuide();
+    }
   }
   if (guide !== me) return;
   guide = null;
-  speak("Done. Nice.");
+  speak(DONE_LINES[kind] || "Done. Nice.");
   send({op: "stop"});
   render();
 }
