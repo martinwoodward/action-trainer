@@ -355,18 +355,28 @@ $("startstop").onclick = () => {
 // --- Guided training: timed prompts, tagged from whichever prompt was showing. ---
 // [label (null = not trained), what to say, hint, seconds, short cue for the badge screen]
 const ready = (hint, secs = 3) => [null, "Get ready", hint, secs, "READY"];
+// Untagged pause between actions: switching takes ~2 s and would muddy both labels.
+const stop = () => [null, "Stop", "Stand still for a moment.", 2, "STOP"];
 const GUIDES = {
   walk: [
     ready("Hold the badge the way you'll wear it."),
     ["still", "Stand still", "Don't move.", 5, "STILL"],
     ["walk", "Start walking", "Walk normally.", 15, "WALK"],
-    ["unknown", "Stop. Lift it up and down", "Stand in place and raise and lower the badge.", 8, "LIFT"],
+    stop(),
+    ["unknown", "Lift it up and down", "Stand in place and raise and lower the badge.", 8, "LIFT"],
+    stop(),
     ["walk", "Walk again", "Walk normally.", 15, "WALK"],
-    ["unknown", "Stop. Fidget with it", "Turn it, tilt it, tap it. No steps.", 8, "FIDGET"],
+    stop(),
+    ["unknown", "Fidget with it", "Turn it, tilt it, tap it. No steps.", 8, "FIDGET"],
+    stop(),
     ["walk", "Walk again", "Walk normally.", 10, "WALK"],
-    ["unknown", "Stop. Swing your arms", "Stay in place, move like you're talking.", 6, "SWAY"],
+    stop(),
+    ["unknown", "Swing your arms", "Stay in place, move like you're talking.", 6, "SWAY"],
+    stop(),
     ["walk", "Walk again", "Walk normally.", 8, "WALK"],
-    ["unknown", "Stop. Wave it up and down", "Stand in place and shake it like you're faking steps.", 8, "WAVE"],
+    stop(),
+    ["unknown", "Wave it up and down", "Stand in place and shake it like you're faking steps.", 8, "WAVE"],
+    stop(),
     ["still", "Stand still", "Don't move.", 4, "STILL"],
   ],
   throw: [ready("Hold it, ready to throw."), ...Array.from({length: 5}, () => [
