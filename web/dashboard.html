@@ -97,6 +97,7 @@
 const PALETTE = ["#08872B", "#0969da", "#bc4c00", "#8250df", "#bf3989", "#cf222e", "#1b7c83", "#9a6700", "#5A615C", "#3192aa"];
 const KEEP_S = 3600;
 const GAP_MS = 20000;    // matches the server's OFFLINE_S
+const LIVE_MAX_MS = 3000; // longest a flight is extended past the last report
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 const colours = {};      // badge_id -> colour, stable for the session
@@ -155,14 +156,19 @@ function record(status) {
   }
 }
 
+// While a badge last reported being in the air, its air time keeps rising in
+// real time until the next report replaces the estimate.
+const extra = (b, now) => b && b.online && b.state === "throw" && b.totals ? Math.min(Math.max(0, now - b.seen), LIVE_MAX_MS) : 0;
+const liveAir = (b, now) => b.totals.throw + extra(b, now);
+
 function card(b) {
-  const air = b.totals ? fmt(b.totals.throw) : "–";
+  const air = b.totals ? fmt(liveAir(b, Date.now())) : "–";
   const since = b.totals ? (b.reset ? "since page reset" : "since badge reboot") : "no totals (old Airtime build)";
   const seen = b.online ? `${b.rssi} dBm` : `offline · ${Math.round(b.age)} s ago`;
   return `<div class="card surface${b.online ? "" : " offline"}" style="--c:${colour(b.badge_id)}">
     <div class="top"><span class="name"><span class="swatch"></span><span class="pic" data-sound="${b.badge_id}" title="Play ${esc(b.name)}'s sound">${badgeIcon(b.name)}</span>${esc(b.name)}${b.online && b.state === "throw" ? '<span class="flying">In the air</span>' : ""}</span>
       <span class="meta">${b.badge_id}</span></div>
-    <div class="air"><b>${air}</b><small>air time</small></div>
+    <div class="air"><b data-air="${b.badge_id}">${air}</b><small>air time</small></div>
     <div class="bottom"><span class="meta">${since} · ${seen}</span>
       <button data-id="${b.badge_id}" ${b.totals ? "" : "disabled"}>Reset</button></div>
   </div>`;
@@ -264,10 +270,15 @@ function draw() {
   const span = +$("span").value * 1000, now = Date.now(), t0 = now - span;
   const online = new Set(badges.filter(b => b.online).map(b => b.badge_id));
   const names = Object.fromEntries(badges.map(b => [b.badge_id, b.name]));
+  const byId = Object.fromEntries(badges.map(b => [b.badge_id, b]));
+  for (const b of badges) if (extra(b, now)) { const el = document.querySelector(`[data-air="${b.badge_id}"]`); if (el) el.textContent = fmt(liveAir(b, now)); }
   const heads = [];
 
   let maxMs = 1000;
-  for (const h of Object.values(history)) for (const [t, v] of h) if (t >= t0 - 5000) maxMs = Math.max(maxMs, v);
+  for (const [id, h] of Object.entries(history)) {
+    for (const [t, v] of h) if (t >= t0 - 5000) maxMs = Math.max(maxMs, v);
+    if (h.length) maxMs = Math.max(maxMs, h[h.length - 1][1] + extra(byId[id], now));
+  }
   const step = niceStep(maxMs / 1000, 5) * 1000, top = Math.ceil(maxMs / step) * step;
   const x = t => L + (t - t0) / span * pw, y = v => T + ph - v / top * ph;
 
@@ -303,11 +314,16 @@ function draw() {
       path.moveTo(x(pt), y(pv)); path.lineTo(x(t), y(v));
     }
     const last = h[h.length - 1];
-    if (online.has(id)) { solid.moveTo(x(last[0]), y(last[1])); solid.lineTo(x(now), y(last[1])); }
+    const up = extra(byId[id], now), headV = last[1] + up;
+    if (online.has(id)) {
+      solid.moveTo(x(last[0]), y(last[1]));
+      if (up) solid.lineTo(x(last[0] + up), y(headV));  // rising live at 1 s per s
+      solid.lineTo(x(now), y(headV));
+    }
     g.setLineDash([]); g.stroke(solid);
     g.setLineDash([6, 6]); g.stroke(gaps); g.setLineDash([]);
     const headT = online.has(id) ? now : last[0];
-    if (headT >= t0) heads.push({id, x: x(headT), y: y(last[1]), online: online.has(id), emoji: namesake(names[id])});
+    if (headT >= t0) heads.push({id, x: x(headT), y: y(online.has(id) ? headV : last[1]), online: online.has(id), emoji: namesake(names[id])});
   }
   g.restore();
 

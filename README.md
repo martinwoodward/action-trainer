@@ -180,6 +180,15 @@ python dashboard.py              # http://localhost:8766
   8 s, and every 60 s regardless. When the badge returns, its line continues
   from where it left off. Because the badge kept counting, the jump across the
   gap is drawn as a dashed straight line.
+- **Latency:** macOS listens for adverts only in short windows, so how often
+  it hears a badge depends mostly on how often the badge advertises. The
+  badge advertises every 20 ms, rebuilds the advert every 250 ms, and
+  re-advertises at once when its state changes. The server pushes each
+  advert to the page as it arrives. A badge then updates on the page about
+  every 0.3 s (p90 under 1 s), against about 2 s and up to 12 s with the old
+  250 ms interval. While a badge is in the air, the page extends its line and
+  air time live, for up to 3 s past the last report. To measure the gaps and
+  the take-off lag, run `python tools/adv_latency.py --seconds 60`.
 - A badge on an older Airtime build still appears, with its state, but shows
   no totals. A badge connected to the recorder may stop advertising, so the
   dashboard shows it as offline until that connection ends.

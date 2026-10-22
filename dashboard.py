@@ -28,6 +28,8 @@ STATE_BY_CODE = {0: "still", 1: "still", 2: "throw", 3: "throw", 4: "drop", 5: "
 OFFLINE_S = 20.0  # macOS reports a badge only every ~0.5-7.5 s, more after a rescan
 HISTORY_S = 3600  # air-time history kept for the graph
 SAVE_EVERY_S = 10.0
+PUSH_MIN_S = 0.05  # adverts heard within this are pushed to pages together
+TICK_S = 0.5  # pages also get a status this often, to age offline badges
 # A long-running CoreBluetooth scan can stop reporting a badge that left range
 # and came back, while a fresh scan sees it at once. So restart the scan soon
 # after a badge goes quiet, and at least every RESCAN_MAX_S forever after.
@@ -194,11 +196,13 @@ async def main():
 
     dash = Dashboard(args.state)
     sockets = set()
+    heard = asyncio.Event()
 
     def on_adv(dev, adv):
         mfg, stats = decode(adv)
         if mfg is not None:
             dash.observe(dev.address, adv.local_name, adv.rssi, mfg, stats)
+            heard.set()
 
     async def index(_request):
         html = (WEB_DIR / "dashboard.html").read_text(encoding="utf-8")
@@ -233,7 +237,14 @@ async def main():
     async def pump():
         last_save = time.time()
         while True:
-            await asyncio.sleep(0.5)
+            # Push as soon as an advert arrives, so pages lag the badge as little
+            # as possible; otherwise every TICK_S.
+            try:
+                await asyncio.wait_for(heard.wait(), TICK_S)
+                await asyncio.sleep(PUSH_MIN_S)
+            except asyncio.TimeoutError:
+                pass
+            heard.clear()
             dash.sample()
             if time.time() - last_save >= SAVE_EVERY_S:
                 dash.save()

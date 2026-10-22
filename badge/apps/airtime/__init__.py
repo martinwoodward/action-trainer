@@ -97,9 +97,12 @@ MODEL_COLORS = {
     "drop": (156, 36, 44),
 }
 
-ADV_INTERVAL_US = 250000
+# Shorter advertising intervals give a scanning laptop more chances to hear
+# each update (macOS only listens in short windows).
+ADV_INTERVAL_US = 20000
 PROMPT_FLASH_MS = 500  # recorder prompts show green when they change
-ADV_REFRESH_MS = 500
+ADV_REFRESH_MS = 250
+ADV_CHANGE_MS = 100  # re-advertise a state change at once, at most this often
 NOTIFY_MIN_MS = 40
 MAX_BUFFERED_SAMPLES = 60
 
@@ -228,6 +231,7 @@ class Link:
         self._pending = []
         self._last_notify = 0
         self._last_adv = 0
+        self._adv_state = None
         self._name_dirty = False
 
         self.ble = bluetooth.BLE()
@@ -304,11 +308,12 @@ class Link:
     def advertise(self, now):
         d = self.detector
         self.adv_seq = (self.adv_seq + 1) & 0xFF
+        self._adv_state = shown_state()
         mfg = protocol.pack_mfg(
             badge_id,
             boot_count,
             self.adv_seq,
-            shown_state(),
+            self._adv_state,
             d.flight_ms,
             d.air_total_ms,
             d.air_at_reset_ms,
@@ -345,7 +350,9 @@ class Link:
             self.ble.gatts_write(self.info_h, self._info())
             self.advertise(now)
 
-        if now - self._last_adv >= ADV_REFRESH_MS:
+        if now - self._last_adv >= ADV_REFRESH_MS or (
+            shown_state() != self._adv_state and now - self._last_adv >= ADV_CHANGE_MS
+        ):
             self.advertise(now)
 
         if not self.connected or not self._pending:
