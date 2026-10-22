@@ -23,13 +23,14 @@
   .badge:first-child { border-top:0; }
   .badge small { color:var(--dim); display:block; }
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px; }
-  .labels { display:grid; grid-template-columns:repeat(5, 1fr); gap:8px; }
+  .labels { display:grid; grid-template-columns:repeat(6, 1fr); gap:8px; }
   .labels button { padding:12px 6px; text-transform:capitalize; }
   .labels button.sel { outline:2px solid var(--accent); }
   .labels button span { display:block; font-size:12px; color:var(--dim); }
   #guide { color:var(--dim); margin:10px 0 0; min-height:2.8em; }
   #big { font-size:42px; font-weight:700; font-variant-numeric:tabular-nums; }
   #bigsub { color:var(--dim); }
+  #big.fresh { color:#2ecc40; }
   canvas { width:100%; height:260px; background:var(--bg); border-radius:6px; display:block; }
   .legend { display:flex; gap:12px; font-size:12px; color:var(--dim); margin-top:6px; }
   .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
@@ -98,23 +99,41 @@
 <script>
 const GUIDE = {
   throw: "Throw it up and catch it, 10 times. Hold it still in your hand for ~2 s between throws. The counter ticks on each detected flight.",
-  drop: "Drop it onto the floor 10 times. Leave it on the floor ~2 s, pick it up, hold still ~2 s, repeat.",
+  drop: "Throw it and don't catch it, 10 times. Let it land on the floor and leave it ~2 s, pick it up, hold still ~2 s, repeat.",
   still: "Put the badge down and don't touch it. Try a few surfaces across sessions (table, floor, chair).",
   walk: "Wear it on the lanyard (in the plushy if that's the stage setup) and walk normally.",
   unknown: "Handle it without throwing or dropping: pick up, wave, shake, twist, pass between hands, put in a pocket.",
+  mixed: "Guided session: follow the prompt shown here and on the badge. PUT DOWN: leave it on a surface. HOLD: hold it and move naturally. THROW: toss it up and catch it; on some catches hold it as still as you can for 2 s. MISS: throw it, let it land on the floor and leave it. Takes = throws and drops each.",
+  landings: "Throws only, to learn catches vs misses. THROW: toss it up and catch it (vary it: soft, firm, some held very still afterwards). MISS: throw it and let it land on the floor; vary the height and surface, and include gentle landings where it barely bounces. Leave it until the next prompt appears, then pick it up and throw. Takes = catches and misses each.",
 };
+const GUIDED = new Set(["mixed", "landings"]);
 const TIMED = new Set(["still", "walk", "unknown"]);
 const STATE_COLOURS = ["#1e46c8", "#1e963c", "#e6c814", "#f07814", "#d21e1e", "#5a5a64"];
 const STATE_NAMES = ["Still", "Walk", "Flying", "Throw", "Drop", "Handling"];
+// A badge running a trained model only reports these (protocol state codes).
+const MODEL_STATES = [0, 3, 4];
 const WINDOW_MS = 10000;
 
+let promptStep = null, freshTimer, audio;
+// A distinct pitch per prompt, so repeats and changes can be heard.
+const TONES = {"PUT DOWN": 440, "HOLD": 587, "THROW": 880, "MISS": 330};
+function beep(prompt) {
+  if (!audio) return;
+  const osc = audio.createOscillator(), gain = audio.createGain(), t = audio.currentTime;
+  osc.frequency.value = TONES[prompt] || 660;
+  gain.gain.setValueAtTime(0.25, t);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+  osc.connect(gain).connect(audio.destination);
+  osc.start(t);
+  osc.stop(t + 0.25);
+}
 let ws, status = null, label = "throw", samples = [];
 const $ = id => document.getElementById(id);
 const send = msg => ws && ws.readyState === 1 && ws.send(JSON.stringify(msg));
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 const log = (text, cls) => { const d = document.createElement("div"); d.textContent = new Date().toLocaleTimeString() + "  " + text; if (cls) d.className = cls; $("log").prepend(d); };
 
-$("legend").innerHTML = STATE_NAMES.map((n, i) => `<span><i style="background:${STATE_COLOURS[i]}"></i>${n}</span>`).join("") + `<span>line = |a| (g)</span>`;
+$("legend").innerHTML = MODEL_STATES.map(i => `<span><i style="background:${STATE_COLOURS[i]}"></i>${STATE_NAMES[i]}</span>`).join("") + `<span>line = |a| (g)</span>`;
 
 function renderLabels() {
   const counts = status ? status.counts : {};
@@ -149,7 +168,21 @@ function render() {
   $("startstop").textContent = rec ? "Stop" : "Start";
   $("startstop").className = rec ? "danger" : "primary";
   $("mark").disabled = !rec;
+  if (!rec || !rec.prompt) promptStep = null;
   if (rec) {
+    if (rec.prompt) {
+      $("big").textContent = rec.prompt;
+      if (rec.step !== promptStep) {
+        // Flash green at the start of each prompt so repeats are visible.
+        promptStep = rec.step;
+        $("big").classList.add("fresh");
+        beep(rec.prompt);
+        clearTimeout(freshTimer);
+        freshTimer = setTimeout(() => $("big").classList.remove("fresh"), 500);
+      }
+      $("bigsub").textContent = `Step ${Math.min(rec.step + 1, rec.steps)} / ${rec.steps} · ${rec.flights} flights · ${rec.missed} missed · ${rec.samples} samples`;
+      return renderPending(p);
+    }
     if (TIMED.has(rec.label)) {
       const target = +$("seconds").value;
       $("big").textContent = `${rec.seconds.toFixed(0)} / ${target} s`;
@@ -167,10 +200,16 @@ function render() {
     $("big").textContent = conn ? "Ready" : "—";
     $("bigsub").textContent = conn ? "Pick an action and press Start." : "Connect a badge, pick an action, press Start.";
   }
+  renderPending(p);
+}
+
+function renderPending(p) {
   $("pending").hidden = !p;
   if (p) {
+    const target = GUIDED.has(p.label) ? 2 * p.takes : p.takes;
     const rows = [["Action", p.label], ["Duration", p.duration_s + " s"], ["Samples", `${p.samples} @ ${p.rate_hz} Hz`],
-      ["Flights detected", p.flights + (TIMED.has(p.label) ? "" : ` (target ${p.takes})`)], ["Marks", p.marks],
+      ["Flights detected", p.flights + (TIMED.has(p.label) ? "" : ` (target ${target})`)], ["Marks", p.marks],
+      ...(GUIDED.has(p.label) ? [["Missed prompts", p.missed]] : []),
       ["Lost packets", p.lost_packets], ["Ended", p.reason]];
     $("summary").innerHTML = rows.map(([k, v]) => `<tr><td style="color:var(--dim)">${k}</td><td>${esc(v)}</td></tr>`).join("");
   }
@@ -178,6 +217,9 @@ function render() {
 
 $("startstop").onclick = () => {
   if (status.recording) return send({op: "stop"});
+  // Browsers only allow audio after a user gesture, so unlock it here.
+  audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+  audio.resume();
   send({op: "start", label, takes: +$("takes").value, plushy: $("plushy").checked, notes: $("notes").value});
   log(`recording ${label}`);
 };

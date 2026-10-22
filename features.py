@@ -14,10 +14,15 @@ FEATURE_NAMES = (
     "gyro_x_std",
     "gyro_y_std",
     "gyro_z_std",
+    # Orientation-independent totals: sqrt of the summed per-axis variances.
+    "gyro_axis_std",
+    "accel_axis_std",
 )
 AXIS_NAMES = ("ax", "ay", "az", "gx", "gy", "gz")
 LSB_PER_G = 16384.0
 LSB_PER_DPS = 70.0
+# Below this acceleration magnitude the badge is treated as airborne.
+FREEFALL_G = 0.4
 
 
 def _mean_std(values):
@@ -43,7 +48,7 @@ def extract_features(samples):
 
     accel_mean, accel_std = _mean_std(accel_mags)
     gyro_mean, gyro_std = _mean_std(gyro_mags)
-    axis_stds = [_mean_std([row[i] for row in rows])[1] for i in range(6)]
+    axis_stds = [_mean_std([row[i] for row in rows])[1] / (LSB_PER_G if i < 3 else LSB_PER_DPS) for i in range(6)]
     return (
         accel_mean,
         accel_std,
@@ -51,5 +56,7 @@ def extract_features(samples):
         max(accel_mags),
         gyro_mean,
         gyro_std,
-        *(axis_stds[i] / (LSB_PER_G if i < 3 else LSB_PER_DPS) for i in range(6)),
+        *axis_stds,
+        math.sqrt(sum(value * value for value in axis_stds[3:])),
+        math.sqrt(sum(value * value for value in axis_stds[:3])),
     )

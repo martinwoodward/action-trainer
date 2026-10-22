@@ -4,7 +4,10 @@ This repository is the laptop-side tool for the **GitHub Universe 2026 badge**.
 It records labelled IMU sessions over Bluetooth, trains a small decision tree,
 and exports a MicroPython `model.py`. The badge apps that use the model live in
 [`badger/home`](https://github.com/badger/home), under `badge/apps/`. Edit
-firmware and apps there, not here.
+firmware and apps there, not here. The exception is the kiosk build for the
+plushy: `badge/apps/airtime/` (Airtime without an exit) and `badge/main.py`
+(boot straight into Airtime). Deploy both with `tools/deploy_badge.py`
+(`kiosk`, `app` or `restore`); `badge/main.orig.py` is the stock boot script.
 
 ## Before you start
 
@@ -21,6 +24,10 @@ firmware and apps there, not here.
 
 - `recorder.py` with `web/recorder.html`: a bleak + aiohttp recorder UI at
   http://localhost:8765. Sessions are saved to `data/<label>/*.csv` + `.json`.
+  A guided `mixed` session prompts PUT DOWN/HOLD/THROW/DROP and saves prompt
+  `segments` in its JSON sidecar; `train.py` labels its windows from them.
+  A guided `landings` session is the same but only THROW/MISS, to
+  collect catch-versus-miss landings.
 - `listen.py`: console listener for badge advertisements.
 - `protocol.py`: the advertisement and GATT format. It mirrors
   `badge/apps/airtime/protocol.py` in `badger/home`, so keep UUIDs, struct
@@ -28,9 +35,15 @@ firmware and apps there, not here.
 - `features.py` and `train.py`: 1 s windows with a 250 ms hop, a
   `DecisionTreeClassifier` (max depth 6), grouped cross-validation by session,
   and export to `dist/model.py` plus `dist/report.json`.
-- Labels are `still`, `walk`, `throw`, `drop` and `unknown`. **The generated
-  model defaults to `still`:** an `unknown` prediction or an empty window
-  returns `still`.
+- Recorded labels are `still`, `walk`, `throw`, `drop` and `unknown`, but the
+  model has exactly three states: `still`, `throw` and `drop`. **The badge is
+  always in one of them and defaults to `still`.**
+- Two stages: the window model labels windows with ≥150 ms of free fall
+  (|a| < 0.4 g) in throw/drop data as `throw`, everything else `still`. A
+  landing model scores the impact, 0–0.5 s after the last free fall
+  (orientation-independent features only), as caught or dropped. `model.Tracker` reports
+  `drop` only after a `throw` and only when the shrunk leaf score reaches
+  `--drop-confidence` (default 0.85); otherwise the catch is assumed.
 - The generated `model.py` must stay plain MicroPython: no numpy and no
   imports beyond `math`.
 - Use `python -m unittest discover -s tests` for tests.

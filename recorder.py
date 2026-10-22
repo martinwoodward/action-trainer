@@ -12,6 +12,7 @@ import asyncio
 import csv
 import json
 import math
+import random
 import time
 import webbrowser
 from datetime import datetime
@@ -32,19 +33,60 @@ from protocol import (
     unpack_mfg,
     unpack_samples,
 )
+from features import FREEFALL_G
 
 DATA_DIR = ROOT / "data"
 WEB_DIR = ROOT / "web"
 LABELS = ("throw", "drop", "still", "walk", "unknown")
+# A guided session mixes still, held, thrown and dropped segments in one go.
+MIXED = "mixed"
+# A landings session only throws: each take is a catch (THROW) or a miss.
+LANDINGS = "landings"
+GUIDED = (MIXED, LANDINGS)
+SESSION_TYPES = LABELS + GUIDED
+# A drop is a throw that is not caught, so the drop prompt asks for a miss.
+PROMPTS = {"still": "PUT DOWN", "hold": "HOLD", "throw": "THROW", "drop": "MISS"}
+STILL_MS = 4000
+HOLD_MS = 3000
+FLIGHT_MIN_MS = 60  # free fall this long counts as a flight
+SETTLE_MS = 1500  # quiet time after the last free fall before moving on
+FLIGHT_TIMEOUT_MS = 20000
 STATE_NAMES = ("STILL", "WALK", "FLYING", "THROW", "DROP", "HANDLING")
-FLYING = 2
+FLYING, THROW, DROP = 2, 3, 4
+# The heuristic detector reports FLYING; a model-driven badge reports THROW/DROP.
+AIRBORNE_STATES = (FLYING, THROW, DROP)
 LSB_PER_G = 16384.0
 CSV_HEADER = ("t_ms", "ax", "ay", "az", "gx", "gy", "gz", "events", "state")
 
 
+def guided_script(flights_each, rng=random):
+    """Shuffled (label, duration_ms) steps; flight steps have no duration."""
+    kinds = ["throw"] * flights_each + ["drop"] * flights_each
+    rng.shuffle(kinds)
+    steps = [("still", STILL_MS)]
+    for kind in kinds:
+        steps.append(("hold", HOLD_MS))
+        steps.append((kind, None))
+        # Drops land on the floor; some throws are followed by setting it down.
+        if kind == "drop" or rng.random() < 0.3:
+            steps.append(("still", STILL_MS))
+    return steps
+
+
+def landings_script(flights_each, rng=random):
+    """Shuffled catches and misses only. Each prompt waits for the throw and
+    moves on once the landing has settled, so there is time to pick it up."""
+    kinds = ["throw"] * flights_each + ["drop"] * flights_each
+    rng.shuffle(kinds)
+    return [(kind, None) for kind in kinds]
+
+
+SCRIPTS = {MIXED: guided_script, LANDINGS: landings_script}
+
+
 def session_counts():
     counts = {}
-    for label in LABELS:
+    for label in SESSION_TYPES:
         folder = DATA_DIR / label
         counts[label] = len(list(folder.glob("*.csv"))) if folder.exists() else 0
     return counts
@@ -59,6 +101,10 @@ class Recorder:
         self.address = None
         self.info = ""
         self.connecting = False
+        self.reconnect_to = None  # badge to reconnect to after an unexpected drop
+        self.disconnected_at = 0.0
+        self.next_reconnect = 0.0
+        self.sent_prompt = None
         self.last_seq = None
         self.lost = 0
         self.t_last16 = None
@@ -99,6 +145,8 @@ class Recorder:
             await client.connect()
             self.client = client
             self.address = address
+            self.reconnect_to = address
+            self.sent_prompt = None
             self.last_seq = None
             self.lost = 0
             self.t_last16 = None
@@ -113,11 +161,30 @@ class Recorder:
 
     def _handle_disconnect(self):
         self.client = None
+        self.disconnected_at = time.time()
         if self.recording is not None:
             self.finish_recording(reason="disconnected")
         self.loop.create_task(self.broadcast_status())
 
+    def should_reconnect(self, now):
+        """Reconnect once the badge advertises again after an unexpected drop
+        (for example the reset switch rebooting a kiosk badge)."""
+        if self.client is not None or self.connecting or self.reconnect_to is None:
+            return False
+        if now < self.next_reconnect:
+            return False
+        seen = self.badges.get(self.reconnect_to, {}).get("seen", 0)
+        return seen > self.disconnected_at
+
+    async def auto_reconnect(self):
+        self.next_reconnect = time.time() + 3
+        try:
+            await self.connect(self.reconnect_to)
+        except Exception as error:  # noqa: BLE001
+            print("reconnect failed:", error)
+
     async def disconnect(self):
+        self.reconnect_to = None
         client = self.client
         if client is not None:
             try:
@@ -144,20 +211,30 @@ class Recorder:
             self.t_last16 = t16
             row = (self.t_ms, ax, ay, az, gx, gy, gz, events, state)
             rec = self.recording
+            mag = math.sqrt(ax * ax + ay * ay + az * az) / LSB_PER_G
             if rec is not None:
                 rec["rows"].append(row)
-                if state == FLYING and rec["prev_state"] != FLYING:
+                if rec["script"] is not None:
+                    self.advance_script(rec, self.t_ms, mag)
+                elif state in AIRBORNE_STATES and rec["prev_state"] not in AIRBORNE_STATES:
                     rec["flights"] += 1
                 rec["prev_state"] = state
-            mag = math.sqrt(ax * ax + ay * ay + az * az) / LSB_PER_G
             self.live.append((self.t_ms, round(mag, 3), state))
 
     # --- recording ---------------------------------------------------------
     def start_recording(self, label, takes, plushy, notes):
-        if label not in LABELS:
+        if label not in SESSION_TYPES:
             raise RuntimeError("unknown label")
         self.pending = None
         self.recording = {
+            "script": SCRIPTS[label](takes) if label in SCRIPTS else None,
+            "step": 0,
+            "step_start": None,
+            "air_since": None,
+            "last_air": None,
+            "flight_at": None,
+            "segments": [],
+            "missed": 0,
             "label": label,
             "takes": takes,
             "plushy": plushy,
@@ -168,6 +245,39 @@ class Recorder:
             "prev_state": None,
             "started": datetime.now(),
         }
+
+    def advance_script(self, rec, t_ms, mag):
+        if rec["step_start"] is None:
+            rec["step_start"] = t_ms
+        label, duration = rec["script"][rec["step"]]
+        elapsed = t_ms - rec["step_start"]
+        if duration is not None:
+            done = elapsed >= duration
+        else:
+            if mag < FREEFALL_G:
+                if rec["air_since"] is None:
+                    rec["air_since"] = t_ms
+                rec["last_air"] = t_ms
+                if rec["flight_at"] is None and t_ms - rec["air_since"] >= FLIGHT_MIN_MS:
+                    rec["flight_at"] = rec["air_since"]
+                    rec["flights"] += 1
+            else:
+                rec["air_since"] = None
+            if rec["flight_at"] is not None:
+                done = t_ms - rec["last_air"] >= SETTLE_MS
+            else:
+                done = elapsed >= FLIGHT_TIMEOUT_MS
+                rec["missed"] += done
+        if not done:
+            return
+        rec["segments"].append(
+            {"label": label, "start_ms": rec["step_start"], "end_ms": t_ms, "flight_ms": rec["flight_at"]}
+        )
+        rec["step"] += 1
+        rec["step_start"] = t_ms
+        rec["air_since"] = rec["last_air"] = rec["flight_at"] = None
+        if rec["step"] >= len(rec["script"]):
+            self.finish_recording(reason="script complete")
 
     def mark(self):
         rec = self.recording
@@ -184,6 +294,11 @@ class Recorder:
         rec["rate_hz"] = round((len(rows) - 1) / duration, 1) if duration else 0
         rec["reason"] = reason
         rec["lost_packets"] = self.lost
+        if rec["script"] is not None and rec["step"] < len(rec["script"]) and rec["step_start"] is not None and rows:
+            label, _ = rec["script"][rec["step"]]
+            rec["segments"].append(
+                {"label": label, "start_ms": rec["step_start"], "end_ms": rows[-1][0], "flight_ms": rec["flight_at"]}
+            )
         self.pending = rec
 
     def save_pending(self):
@@ -219,6 +334,18 @@ class Recorder:
             "end_reason": rec["reason"],
             "lsb_per_g": LSB_PER_G,
         }
+        if rec["script"] is not None:
+            meta["segments"] = [
+                {
+                    "label": seg["label"],
+                    "start_ms": seg["start_ms"] - t0,
+                    "end_ms": seg["end_ms"] - t0,
+                    "flight_ms": None if seg["flight_ms"] is None else seg["flight_ms"] - t0,
+                }
+                for seg in rec["segments"]
+            ]
+            meta["missed_flights"] = rec["missed"]
+            meta["freefall_g"] = FREEFALL_G
         (folder / (stem + ".json")).write_text(json.dumps(meta, indent=2))
         return str((folder / (stem + ".csv")).relative_to(ROOT))
 
@@ -227,6 +354,9 @@ class Recorder:
         if rec is None:
             return ""
         label = rec["label"].upper()
+        if rec["script"] is not None:
+            step = min(rec["step"], len(rec["script"]) - 1)
+            return "%s %d/%d" % (PROMPTS[rec["script"][step][0]], step + 1, len(rec["script"]))
         if rec["label"] in ("throw", "drop"):
             return "%s %d/%d" % (label, rec["flights"], rec["takes"])
         secs = (rec["rows"][-1][0] - rec["rows"][0][0]) // 1000 if len(rec["rows"]) > 1 else 0
@@ -256,11 +386,17 @@ class Recorder:
                 "marks": len(rec["marks"]),
                 "samples": len(rec["rows"]),
                 "seconds": round((rec["rows"][-1][0] - rec["rows"][0][0]) / 1000, 1) if len(rec["rows"]) > 1 else 0,
+                "prompt": None
+                if rec["script"] is None
+                else PROMPTS[rec["script"][min(rec["step"], len(rec["script"]) - 1)][0]],
+                "step": rec["step"],
+                "steps": None if rec["script"] is None else len(rec["script"]),
+                "missed": rec["missed"],
             },
             "pending": None
             if pend is None
             else {
-                k: pend[k] for k in ("label", "takes", "flights", "duration_s", "rate_hz", "lost_packets", "reason")
+                k: pend[k] for k in ("label", "takes", "flights", "duration_s", "rate_hz", "lost_packets", "reason", "missed")
             }
             | {"marks": len(pend["marks"]), "samples": len(pend["rows"])},
             "counts": session_counts(),
@@ -279,19 +415,20 @@ class Recorder:
 
     async def pump(self):
         last_status = 0
-        last_prompt = None
         while True:
             await asyncio.sleep(0.05)
             if self.live:
                 batch, self.live = self.live, []
                 await self.broadcast({"type": "samples", "data": batch})
             now = time.time()
+            if self.should_reconnect(now):
+                self.loop.create_task(self.auto_reconnect())
             if now - last_status >= 0.5:
                 last_status = now
                 await self.broadcast_status()
                 prompt = self.badge_prompt()
-                if self.client is not None and prompt != last_prompt:
-                    last_prompt = prompt
+                if self.client is not None and prompt != self.sent_prompt:
+                    self.sent_prompt = prompt
                     try:
                         await self.command(CMD_LABEL, prompt)
                     except Exception:
@@ -329,7 +466,7 @@ async def ws_handler(request):
     ws = web.WebSocketResponse(heartbeat=10)
     await ws.prepare(request)
     rec.sockets.add(ws)
-    await ws.send_str(json.dumps({"type": "hello", "labels": LABELS}))
+    await ws.send_str(json.dumps({"type": "hello", "labels": SESSION_TYPES}))
     await ws.send_str(json.dumps(rec.status()))
     async for m in ws:
         if m.type != WSMsgType.TEXT:
@@ -343,7 +480,9 @@ async def ws_handler(request):
 
 
 async def index(_request):
-    return web.FileResponse(WEB_DIR / "recorder.html")
+    # no-store so a restarted recorder's page changes show on a normal reload
+    html = (WEB_DIR / "recorder.html").read_text(encoding="utf-8")
+    return web.Response(text=html, content_type="text/html", headers={"Cache-Control": "no-store"})
 
 
 async def main():
