@@ -146,7 +146,9 @@ clock. You can choose a 1 min, 5 min, 15 min or 1 h window. A badge named
 after an animal or a mascot (for example Duckie, Squirrel or Copilot) shows
 that picture at the leading end of its line, and next to its name on its card.
 Duckie is drawn as a yellow rubber duck; Copilot and Mona use the Copilot and
-Octocat marks from Primer Octicons (MIT); the other animals use emoji. To add more, edit
+Octocat marks from Primer Octicons (MIT); the other animals use emoji.
+The page uses the light theme of [badger.github.io](https://badger.github.io/)
+(colours, fonts and card styles from its `src/styles/globals.css`). To add more, edit
 `NAMESAKES` in `web/dashboard.html`. Points are only
 dropped from the chart once they are more than an hour old. The server saves
 the history, the known badges and the page-reset baselines to
