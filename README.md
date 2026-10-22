@@ -137,12 +137,57 @@ Ways back in:
 - Double-tap reset: the badge comes up as a `BADGER` USB drive. Eject it to
   reboot.
 
+## State-time dashboard
+
+`dashboard.py` follows any number of badges by passive Bluetooth scanning. It
+shows each badge's **air time** (time in the `throw` state) since it was reset,
+and graphs every badge's cumulative air time on a chart that scrolls with the
+clock. You can choose a 1 min, 5 min, 15 min or 1 h window. A badge named
+after an animal or a mascot (for example Duckie, Squirrel or Copilot) shows
+that picture at the leading end of its line, and next to its name on its card.
+Duckie is drawn as a yellow rubber duck; Copilot and Mona use the Copilot and
+Octocat marks from Primer Octicons (MIT); the other animals use emoji. To add more, edit
+`NAMESAKES` in `web/dashboard.html`. Points are only
+dropped from the chart once they are more than an hour old. The server saves
+the history, the known badges and the page-reset baselines to
+`dashboard_state.json`, so neither a page reload nor a server restart empties
+the chart:
+
+```powershell
+python dashboard.py              # http://localhost:8766
+```
+
+- **Counting is done on the badge.** The Airtime app in this repository adds up
+  milliseconds per state while it runs and advertises the totals. The totals
+  stay exact while the laptop is out of range.
+- **Resets:** a badge reboot zeroes its counters. **Reset** on the page (per
+  badge or **Reset all**) stores a baseline in `dashboard_state.json`, and the
+  times shown are counted from that baseline. A restart of the dashboard keeps
+  the baselines. The next reboot of that badge clears its baseline. **Reset
+  all** also clears the chart history, on the server and in every open page.
+- **Out of range:** a badge that goes quiet greys out after 20 s, but the
+  dashboard never stops looking for it. A long-running macOS scan can miss a
+  badge that comes back, so the scan restarts when a badge has been quiet for
+  8 s, and every 60 s regardless. When the badge returns, its line continues
+  from where it left off. Because the badge kept counting, the jump across the
+  gap is drawn as a dashed straight line.
+- A badge on an older Airtime build still appears, with its state, but shows
+  no totals. A badge connected to the recorder may stop advertising, so the
+  dashboard shows it as offline until that connection ends.
+
 ## BLE protocol
 
 `protocol.py` mirrors the advertisement and GATT packet contract implemented
 by `badge/apps/airtime/protocol.py` in `badger/home`. Keep the UUIDs, packet
 field order, and struct formats synchronized; `tests/test_stream.py` checks
 the recording packet format.
+
+The state totals are not in the 31-byte manufacturer advert, which is full.
+They travel in the scan response, as service data under the 16-bit UUID
+`0xA17E` (`<BIII>`: boot, still_ms, throw_ms, drop_ms). There they fit next to
+the name, which the scan response cuts to 12 characters. Only this
+repository's copy of the protocol has the stats so far; `badger/home` doesn't
+yet.
 
 ## Development checks
 

@@ -29,6 +29,14 @@ plushy: `badge/apps/airtime/` (Airtime without an exit) and `badge/main.py`
   A guided `landings` session is the same but only THROW/MISS, to
   collect catch-versus-miss landings.
 - `listen.py`: console listener for badge advertisements.
+- `dashboard.py` with `web/dashboard.html`: a passive-scan, multi-badge page at
+  http://localhost:8766. It shows air time (time in `throw`) since the last
+  reset, with a scrolling chart of each badge's cumulative air time.
+  The badge counts the ms per state and advertises them in its scan response
+  (service data `0xA17E`). `dashboard_state.json` holds the page-reset
+  baselines (cleared when the badge reboots), the known badges and an hour of
+  chart history. The scan restarts when a badge goes quiet, because a
+  long-running macOS scan can stop reporting a badge that comes back.
 - `protocol.py`: the advertisement and GATT format. It mirrors
   `badge/apps/airtime/protocol.py` in `badger/home`, so keep UUIDs, struct
   formats and field order identical on both sides.

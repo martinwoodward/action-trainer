@@ -2,7 +2,8 @@
 
 Legacy advertising leaves 31 bytes; flags (3) + manufacturer AD header (2)
 + this 26-byte body fills it exactly. The badge name goes in the scan
-response. Counters only increase (u8 counters wrap at 256), so listeners can
+response, together with per-state time totals (service data, see
+pack_stats). Counters only increase (u8 counters wrap at 256), so listeners can
 miss packets without losing events.
 """
 
@@ -54,9 +55,41 @@ def adv_payload(mfg):
     return bytes((2, 0x01, 0x06, len(mfg) + 1, 0xFF)) + mfg
 
 
-def scan_response(name):
-    raw = name.encode()[:29]
-    return bytes((len(raw) + 1, 0x09)) + raw
+# Scan response service data (AD 0x16): ms spent in each model state since
+# boot. It is service data rather than a second 0xFFFF manufacturer block so
+# that scanners which merge advert and scan response keep both.
+STATS_UUID16 = 0xA17E
+STATS_UUID = "0000a17e-0000-1000-8000-00805f9b34fb"
+STATS_FORMAT = "<HBIII"
+STATS_BODY_FORMAT = "<BIII"  # as delivered by scanners, after the UUID
+STATS_FIELDS = ("boot", "still_ms", "throw_ms", "drop_ms")
+NAME_MAX = 31 - 2 - struct.calcsize(STATS_FORMAT) - 2  # 12 bytes
+
+
+def pack_stats(boot, still_ms, throw_ms, drop_ms):
+    return struct.pack(
+        STATS_FORMAT,
+        STATS_UUID16,
+        boot & 0xFF,
+        still_ms & 0xFFFFFFFF,
+        throw_ms & 0xFFFFFFFF,
+        drop_ms & 0xFFFFFFFF,
+    )
+
+
+def unpack_stats(data):
+    """Decode stats service data *without* the UUID (bleak's service_data value)."""
+    if data is None or len(data) < struct.calcsize(STATS_BODY_FORMAT):
+        return None
+    return dict(zip(STATS_FIELDS, struct.unpack_from(STATS_BODY_FORMAT, data, 0)))
+
+
+def scan_response(name, stats=None):
+    raw = name.encode()[: NAME_MAX if stats else 29]
+    out = bytes((len(raw) + 1, 0x09)) + raw
+    if stats:
+        out += bytes((len(stats) + 1, 0x16)) + stats
+    return out
 
 
 # --- GATT (recording and setup) ------------------------------------------

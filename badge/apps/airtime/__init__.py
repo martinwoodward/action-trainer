@@ -321,7 +321,10 @@ class Link:
             self.ble.gap_advertise(
                 ADV_INTERVAL_US,
                 adv_data=protocol.adv_payload(mfg),
-                resp_data=protocol.scan_response(badge_name),
+                resp_data=protocol.scan_response(
+                    badge_name,
+                    protocol.pack_stats(boot_count, state_ms[STILL], state_ms[THROW], state_ms[DROP]),
+                ),
                 connectable=True,
             )
         except OSError:
@@ -378,6 +381,12 @@ class Classifier:
 
 
 MODEL_STATES = {"still": STILL, "throw": THROW, "drop": DROP}
+
+
+# Milliseconds in each model state since boot, advertised in the scan response.
+state_ms = {STILL: 0, THROW: 0, DROP: 0}
+# Heuristic-detector states (no model loaded) folded into the model's three.
+STATE_BUCKET = {FLYING: THROW, THROW: THROW, DROP: DROP}
 
 
 def shown_state():
@@ -449,7 +458,10 @@ def update():
     ax, ay, az, gx, gy, gz = badge.imu()
     events, last_g = detector.update(now, dt, ax, ay, az, gx, gy, gz)
     classifier.update(now, (ax, ay, az, gx, gy, gz))
-    link.queue(protocol.pack_sample(now, ax, ay, az, gx, gy, gz, events, shown_state()))
+    shown = shown_state()
+    bucket = STATE_BUCKET.get(shown, STILL)
+    state_ms[bucket] += dt
+    link.queue(protocol.pack_sample(now, ax, ay, az, gx, gy, gz, events, shown))
     link.service(now)
 
     # No exit: handling the plushy brushes the capacitive pads, and the badge
