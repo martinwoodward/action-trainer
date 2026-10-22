@@ -147,6 +147,13 @@ after an animal or a mascot (for example Duckie, Squirrel or Copilot) shows
 that picture at the leading end of its line, and next to its name on its card.
 Duckie is drawn as a yellow rubber duck; Copilot and Mona use the Copilot and
 Octocat marks from Primer Octicons (MIT); the other animals use emoji.
+Turn on **Sound** in the header and the dashboard's computer plays a sound of
+delight each time a plushie takes off: a rubber-duck squeak for Duckie, a
+chitter for Squirrel, a sparkly arpeggio for Copilot, bubble bloops for Mona,
+and a "wheee" for anyone else. Click a badge's picture on its card to hear its
+sound. The sounds are synthesised in the page with Web Audio; browsers only
+allow sound after a click on the page.
+
 The page uses the light theme of [badger.github.io](https://badger.github.io/)
 (colours, fonts and card styles from its `src/styles/globals.css`). To add more, edit
 `NAMESAKES` in `web/dashboard.html`. Points are only

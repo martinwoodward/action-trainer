@@ -59,6 +59,7 @@
   .card:hover { border-color:color-mix(in srgb, var(--primary) 55%, transparent); }
   .card.offline { opacity:.55; }
   .top { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .name .pic { cursor:pointer; }
   .name { font-size:1rem; font-weight:600; letter-spacing:-0.01em; display:flex; align-items:center; gap:.4rem; flex-wrap:wrap; }
   .swatch { width:.7rem; height:.7rem; border-radius:3px; background:var(--c); flex:none; }
   .meta { font:.65rem/1.5 var(--mono); text-transform:uppercase; letter-spacing:.12em; color:var(--muted-foreground); }
@@ -83,6 +84,7 @@
       <option value="3600">1 h</option>
     </select>
   </label>
+  <button id="sound" title="Play each plushie's sound when it is thrown">Sound off</button>
   <button id="resetall" class="danger">Reset all</button>
 </header>
 <main>
@@ -158,7 +160,7 @@ function card(b) {
   const since = b.totals ? (b.reset ? "since page reset" : "since badge reboot") : "no totals (old Airtime build)";
   const seen = b.online ? `${b.rssi} dBm` : `offline · ${Math.round(b.age)} s ago`;
   return `<div class="card surface${b.online ? "" : " offline"}" style="--c:${colour(b.badge_id)}">
-    <div class="top"><span class="name"><span class="swatch"></span>${badgeIcon(b.name)}${esc(b.name)}${b.online && b.state === "throw" ? '<span class="flying">In the air</span>' : ""}</span>
+    <div class="top"><span class="name"><span class="swatch"></span><span class="pic" data-sound="${b.badge_id}" title="Play ${esc(b.name)}'s sound">${badgeIcon(b.name)}</span>${esc(b.name)}${b.online && b.state === "throw" ? '<span class="flying">In the air</span>' : ""}</span>
       <span class="meta">${b.badge_id}</span></div>
     <div class="air"><b>${air}</b><small>air time</small></div>
     <div class="bottom"><span class="meta">${since} · ${seen}</span>
@@ -166,7 +168,78 @@ function card(b) {
   </div>`;
 }
 
+// Sounds of delight, played by this computer when a plushie takes off. Each is
+// synthesised with Web Audio, so there are no files to serve.
+let audio, master;
+let soundOn = localStorage.getItem("airtime-sound") === "on";
+function ctx() {
+  if (!audio) {
+    audio = new AudioContext();
+    const comp = audio.createDynamicsCompressor();
+    master = audio.createGain(); master.gain.value = 0.5;
+    master.connect(comp); comp.connect(audio.destination);
+  }
+  if (audio.state === "suspended") audio.resume();
+  return audio;
+}
+// One note: a pitch sweep through (time, Hz) points with a quick attack and decay.
+function note(t, dur, freqs, {type = "sine", vol = 0.3, filter} = {}) {
+  const a = ctx(), o = a.createOscillator(), g = a.createGain();
+  o.type = type;
+  freqs.forEach(([dt, f], i) => i ? o.frequency.exponentialRampToValueAtTime(f, t + dt) : o.frequency.setValueAtTime(f, t + dt));
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + Math.min(0.015, dur / 4));
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  let out = o;
+  if (filter) { const f = a.createBiquadFilter(); f.type = "bandpass"; f.frequency.value = filter; f.Q.value = 2; o.connect(f); out = f; }
+  out.connect(g); g.connect(master);
+  o.start(t); o.stop(t + dur + 0.02);
+}
+const SOUNDS = [
+  // A rubber duck squeezed twice: squee-squee!
+  ["duck", t => [0, 0.17].forEach((d, i) => note(t + d, 0.15, [[0, 950 + i * 120], [0.05, 1500 + i * 150], [0.15, 1050]], {type: "sawtooth", vol: 0.22, filter: 1400}))],
+  // A happy squirrel chitter: quick falling chirps.
+  ["squirrel", t => [0, 0.055, 0.11, 0.165, 0.22, 0.3].forEach((d, i) => note(t + d, 0.045, [[0, 3400 - i * 120], [0.045, 2300]], {vol: 0.22}))],
+  // Copilot: a sparkly rising arpeggio with a shimmer on top.
+  ["copilot", t => { [523, 659, 784, 1047, 1319].forEach((f, i) => note(t + i * 0.06, 0.35, [[0, f]], {type: "triangle", vol: 0.25}));
+    note(t + 0.3, 0.5, [[0, 2093], [0.5, 2637]], {vol: 0.08}); }],
+  // Mona the Octocat: bubbly bloops rising out of the deep.
+  ["mona", t => [[0, 260, 620], [0.11, 340, 820], [0.22, 450, 1150], [0.36, 520, 1500]].forEach(([d, f0, f1]) => note(t + d, 0.12, [[0, f0], [0.1, f1]], {vol: 0.3}))],
+  ["octocat", t => SOUNDS[3][1](t)],
+];
+// Anyone else gets a "wheee!" slide, pitched by their id so badges differ.
+function wheee(t, id) {
+  const base = 380 + (parseInt(id, 16) % 7) * 45;
+  note(t, 0.5, [[0, base], [0.35, base * 3], [0.5, base * 2.6]], {type: "triangle", vol: 0.25});
+}
+function delight(b) {
+  if (!audio && !soundOn) return;
+  const t = ctx().currentTime + 0.02, key = String(b.name).toLowerCase();
+  const s = SOUNDS.find(([k]) => key.includes(k));
+  s ? s[1](t) : wheee(t, b.badge_id);
+}
+function showSound() {
+  const live = soundOn && audio && audio.state === "running";
+  $("sound").textContent = !soundOn ? "Sound off" : live ? "Sound on" : "Click for sound";
+}
+
+// A take-off is the badge entering the throw state. macOS can miss the short
+// throw advert, so a rise in air time while not flying counts as one too.
+const flight = {};       // badge_id -> {flying, air, at}
+function listen(status) {
+  for (const b of status.badges) {
+    const was = flight[b.badge_id], air = b.totals ? b.totals.throw : 0;
+    const flying = b.online && b.state === "throw";
+    const now = Date.now();
+    if (was && b.online && (flying && !was.flying || !flying && !was.flying && air > was.air) && now - was.at > 2500) {
+      if (soundOn) delight(b);
+      flight[b.badge_id] = {flying, air, at: now};
+    } else flight[b.badge_id] = {flying, air, at: was ? was.at : 0};
+  }
+}
+
 function render(status) {
+  listen(status);
   badges = status.badges;
   badges.forEach(b => colour(b.badge_id));
   $("grid").innerHTML = badges.map(card).join("");
@@ -274,7 +347,21 @@ function connect() {
   ws.onclose = () => { $("conn").textContent = "server disconnected, retrying…"; setTimeout(connect, 1000); };
 }
 const send = msg => ws && ws.readyState === 1 && ws.send(JSON.stringify(msg));
-$("grid").onclick = e => { const b = e.target.closest("button[data-id]"); if (b) send({op: "reset", badge_id: b.dataset.id}); };
+$("grid").onclick = e => {
+  const b = e.target.closest("button[data-id]");
+  if (b) send({op: "reset", badge_id: b.dataset.id});
+  const p = e.target.closest("[data-sound]");
+  if (p) { const badge = badges.find(x => x.badge_id === p.dataset.sound); ctx(); if (badge) delight(badge); showSound(); }
+};
+$("sound").onclick = () => {
+  soundOn = !soundOn;
+  localStorage.setItem("airtime-sound", soundOn ? "on" : "off");
+  if (soundOn) { ctx(); wheee(audio.currentTime + 0.02, "0"); }
+  showSound();
+};
+// Browsers start audio suspended until the page is clicked.
+document.addEventListener("pointerdown", () => { if (soundOn) ctx(); setTimeout(showSound, 50); });
+showSound();
 $("resetall").onclick = () => { if (confirm("Reset the air time of every badge and clear the chart?")) send({op: "reset_all"}); };
 connect();
 requestAnimationFrame(draw);
