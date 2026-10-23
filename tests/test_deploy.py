@@ -69,16 +69,36 @@ class GateTests(unittest.TestCase):
         rec.broadcast = broadcast
         with mock.patch.multiple(recorder, MODEL_PATH=dist / "model.py",
                                  DEPLOYED_MODEL=dist / "deployed_model.py",
-                                 DEPLOYED_CARD=dist / "deployed.json"), \
+                                 DEPLOYED_CARD=dist / "deployed.json",
+                                 MODEL_HIDDEN=dist / "model_hidden"), \
                 mock.patch.object(recorder.trainer, "train", fake_train):
             asyncio.run(rec.train_and_deploy(force))
             return sent[-1], rec.model_card()
+
+    def test_hidden_demo_model_is_always_replaced_without_comparison(self):
+        with tempfile.TemporaryDirectory() as temp:
+            dist = Path(temp)
+            rec, badge = Recorder(), FakeBadge()
+            rec.client = badge
+            rec.hide_model = False
+            self.run_round(rec, dist, 0.9, None)
+            rec.hide_model = True
+            (dist / "model_hidden").touch()
+
+            msg, card = self.run_round(rec, dist, 0.5, 0.9)
+            self.assertIsNotNone(msg["deployed"])
+            self.assertIsNone(card["kept"])
+            self.assertIsNone(card["deployed"]["previous"])
+            self.assertFalse(card["hidden"])
+            self.assertFalse((dist / "model_hidden").exists())
+            self.assertEqual((dist / "deployed_model.py").read_text(), "# model 0.5")
 
     def test_worse_model_is_kept_back_unless_forced(self):
         with tempfile.TemporaryDirectory() as temp:
             dist = Path(temp)
             rec, badge = Recorder(), FakeBadge()
             rec.client = badge
+            rec.hide_model = False
             msg, card = self.run_round(rec, dist, 0.9, None)
             self.assertIsNotNone(msg["deployed"])
             self.assertEqual(card["deployed"]["test"]["accuracy"], 0.9)

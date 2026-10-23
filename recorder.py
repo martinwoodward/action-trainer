@@ -28,6 +28,7 @@ from protocol import (
     CMD_MODEL_BEGIN,
     CMD_MODEL_DATA,
     CMD_MODEL_END,
+    CMD_MODEL_SHOW,
     CMD_NAME,
     CMD_PING,
     COMPANY_ID,
@@ -68,6 +69,7 @@ MODEL_PATH = DIST_DIR / "model.py"
 # The last model that reached a badge, and its test-set scorecard.
 DEPLOYED_MODEL = DIST_DIR / "deployed_model.py"
 DEPLOYED_CARD = DIST_DIR / "deployed.json"
+MODEL_HIDDEN = DIST_DIR / "model_hidden"  # present while the demo "hide the model" setting is on
 LABELS = ("throw", "drop", "still", "walk", "unknown")
 SEGMENT_LABELS = LABELS + ("ignore",)
 GUIDE_REACTION_MS = 1000  # skip this long after each guided cue while the user reacts
@@ -85,6 +87,7 @@ class Recorder:
         self.client = None
         self.kept = None
         self.address = None
+        self.hide_model = MODEL_HIDDEN.exists()  # demo: show "no model" in the UI and on the badge until the next training run
         self.target = None  # badge to stay connected to; cleared by an explicit disconnect
         self.retry_at = 0.0
         self.retry_delay = 0.0
@@ -141,6 +144,10 @@ class Recorder:
             self.address = address
             self.retry_delay = 0.0
             log("connected", self.info)
+            try:
+                await self.command(CMD_MODEL_SHOW, "0" if self.hide_model else "1")
+            except Exception as e:
+                log("couldn't update the badge's model line:", describe(e))
         except Exception as e:
             try:
                 await client.disconnect()
@@ -236,11 +243,30 @@ class Recorder:
 
     def model_card(self):
         """Scorecard of the model on the badge, plus a rejected candidate if any."""
-        return {"deployed": self.deployed_card(), "kept": self.kept}
+        return {"deployed": self.deployed_card(), "kept": self.kept, "hidden": self.hide_model}
+
+    async def set_model_hidden(self, hidden):
+        if hidden == self.hide_model:
+            return
+        self.hide_model = hidden
+        if hidden:
+            DIST_DIR.mkdir(parents=True, exist_ok=True)
+            MODEL_HIDDEN.touch()
+        else:
+            MODEL_HIDDEN.unlink(missing_ok=True)
+        if self.client is not None:
+            try:
+                await self.command(CMD_MODEL_SHOW, "0" if hidden else "1")
+            except Exception as e:
+                log("couldn't update the badge's model line:", describe(e))
 
     async def train_and_deploy(self, force=False):
         """Train, then deploy only if the new model scores at least as well on
-        the fixed test recordings as the one already deployed (unless forced)."""
+        the fixed test recordings as the one already deployed (unless forced).
+        While the model is hidden for a demo, always deploy and don't compare
+        against the hidden model."""
+        demo = self.hide_model
+        force = force or demo
         await self.broadcast({"type": "training"})
         baseline_path = DEPLOYED_MODEL if self.deployed_card() else None
         report = await asyncio.to_thread(trainer.train, DATA_DIR, MODEL_PATH, baseline_path)
@@ -259,10 +285,11 @@ class Recorder:
             "tag": tag,
             "deployed_at": datetime.now().isoformat(timespec="seconds"),
             "test": test or None,
-            "previous": baseline,
+            "previous": None if demo else baseline,
             "windows": report["windows_per_label"],
         }, indent=2), encoding="utf-8")
         self.kept = None
+        await self.set_model_hidden(False)
         await self.broadcast({"type": "trained", "deployed": tag, "model": self.model_card()})
 
     def on_stream(self, _char, data):
@@ -555,6 +582,8 @@ class Recorder:
             self.pending = None
         elif op == "train_deploy":
             await self.train_and_deploy(bool(msg.get("force")))
+        elif op == "hide_model":
+            await self.set_model_hidden(bool(msg.get("hidden")))
         await self.broadcast_status()
 
 

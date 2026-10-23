@@ -58,6 +58,9 @@
   #settingspop { position:fixed; top:4.9rem; right:24px; width:min(340px, calc(100vw - 48px)); }
   #settingspop label { display:block; font-size:13px; color:var(--dim); margin-bottom:6px; }
   .setrow { display:flex; gap:8px; }
+  #settingspop label.check { display:flex; gap:8px; align-items:center; color:var(--text); font-size:14px; margin:16px 0 4px; cursor:pointer; }
+  #settingspop .check input { accent-color:var(--accent); width:16px; height:16px; margin:0; }
+  #settingspop .hint { margin:0; font-size:12px; }
   select { flex:1; min-width:0; font:inherit; font-size:14px; color:var(--text); background:var(--inset); border:1px solid var(--line);
     border-radius:calc(var(--radius) - 2px); padding:7px 10px; }
   select:focus { outline:none; border-color:var(--accent); }
@@ -159,6 +162,8 @@
 <div id="settingspop" class="pop" hidden><h2>Settings</h2>
   <label for="voice">Voice</label>
   <div class="setrow"><select id="voice"></select><button id="voicetest">Test</button></div>
+  <label class="check"><input type="checkbox" id="hidemodel"> Hide the model (demo)</label>
+  <p class="hint">Shows "no model" here and on the badge until the next Train &amp; deploy. The model stays on the badge.</p>
 </div>
 <div id="renamepop" class="pop" hidden><input id="newname" type="text" maxlength="16" placeholder="Badge name"><button id="rename" class="primary">Save</button></div>
 <main>
@@ -345,7 +350,8 @@ function delta(now, before) {
   return d ? `<span class="delta ${d > 0 ? "up" : "down"}">${d > 0 ? "+" : ""}${d}</span>` : "";
 }
 function renderModel() {
-  const m = status.model || {}, card = m.deployed, test = card && card.test;
+  const m = status.model || {}, card = m.hidden ? null : m.deployed, test = card && card.test;
+  $("hidemodel").checked = !!m.hidden;
   if (!test) {
     $("score").innerHTML = `<p class="hint">${card ? "Deployed. Record a few more runs and I'll hold some back to score it."
       : "Record a few runs, then train. I'll score it on recordings it never saw."}</p>`;
@@ -357,12 +363,18 @@ function renderModel() {
         `<div class="bar"><span>${name} ${delta(test.recall[k], prev && prev.recall[k])}</span><span>${pct(test.recall[k])}</span>` +
         `<div class="track"><i style="width:${pct(test.recall[k])};background:${colour}"></i></div></div>`).join("") + `</div>`;
   }
-  const kept = m.kept;
+  const kept = !m.hidden && m.kept;
   $("kept").hidden = !kept;
   if (kept) $("kept").innerHTML = `New model scored ${pct(kept.test.accuracy)}, below the ${pct(kept.current.accuracy)} on your badge, so I kept the current one.` +
     `<br><button class="small" id="force">Deploy anyway</button>`;
 }
 $("kept").onclick = e => { if (e.target.id === "force") trainDeploy(true); };
+$("hidemodel").onchange = () => {
+  status.model = {...(status.model || {}), hidden: $("hidemodel").checked};
+  $("modelstatus").textContent = "";
+  renderModel();
+  send({op: "hide_model", hidden: $("hidemodel").checked});
+};
 function trainDeploy(force) {
   $("traindeploy").disabled = true;
   $("modelstatus").textContent = "Training…";

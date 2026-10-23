@@ -84,6 +84,7 @@ LINK_TIMEOUT_MS = 8000
 CMD_MODEL_BEGIN = b"B"
 CMD_MODEL_DATA = b"D"
 CMD_MODEL_END = b"E"
+CMD_MODEL_SHOW = b"M"  # M1 shows / M0 hides the model line on the badge (demo); persisted, upload re-shows
 CONTROL_MAX = 244  # control characteristic buffer on the badge
 
 
