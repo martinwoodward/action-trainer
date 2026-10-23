@@ -1,4 +1,4 @@
-"""Wire formats, the dashboard's UDP link and its aggregation of per-state totals."""
+"""Wire formats, the leaderboard's UDP link and its aggregation of per-state totals."""
 import asyncio
 import tempfile
 import time
@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 import protocol
-from dashboard import BadgeLink, Dashboard
+from leaderboard import BadgeLink, Leaderboard
 
 
 def mfg(boot, state=0, badge_id=0xC03CFD52):
@@ -62,14 +62,14 @@ class FakeTransport:
 
 class BadgeLinkTests(unittest.TestCase):
     def setUp(self):
-        self.dash = Dashboard(None)
+        self.dash = Leaderboard(None)
         self.heard = asyncio.Event()
         self.replies = []
         self.link = BadgeLink(self.dash, self.heard, lambda b, p: self.replies.append((b, p)))
         self.transport = FakeTransport()
         self.link.connection_made(self.transport)
 
-    def test_status_updates_dashboard_and_is_acked_once(self):
+    def test_status_updates_leaderboard_and_is_acked_once(self):
         addr = ("192.168.9.208", 47217)
         self.link.datagram_received(status_packet(state=3, still=900, throw=600), addr)
         self.link.datagram_received(status_packet(state=3, still=900, throw=650, seq=2), addr)
@@ -90,11 +90,11 @@ class BadgeLinkTests(unittest.TestCase):
         self.link.datagram_received(b"junk", ("10.0.0.6", 1))  # ignored
 
 
-class DashboardTests(unittest.TestCase):
+class LeaderboardTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.state_file = Path(self.temp.name) / "state.json"
-        self.dash = Dashboard(self.state_file)
+        self.dash = Leaderboard(self.state_file)
 
     def tearDown(self):
         self.temp.cleanup()
@@ -108,7 +108,7 @@ class DashboardTests(unittest.TestCase):
         self.dash.observe("A", "b1", -50, mfg(3, state=4), stats(3, 12000, 1500, 2000), now=100.0)
         self.assertEqual(self.totals(), {"still": 2000, "throw": 1000, "drop": 2000})
 
-        restarted = Dashboard(self.state_file)
+        restarted = Leaderboard(self.state_file)
         restarted.observe("A", "b1", -50, mfg(3), stats(3, 12000, 1500, 2000), now=100.0)
         self.assertEqual(restarted.snapshot(now=100.0)["badges"][0]["totals"]["still"], 2000)
 
@@ -120,7 +120,7 @@ class DashboardTests(unittest.TestCase):
         self.assertIsNone(self.totals())
         self.dash.observe("A", "b1", -50, mfg(4), stats(4, 300), now=100.0)
         self.assertEqual(self.totals(), {"still": 300, "throw": 0, "drop": 0})
-        self.assertNotIn("c03cfd52", Dashboard(self.state_file).baselines)
+        self.assertNotIn("c03cfd52", Leaderboard(self.state_file).baselines)
 
     def test_history_samples_air_time_and_collapses_flat_runs(self):
         for i, throw in enumerate([0, 0, 0, 800, 800]):
@@ -142,7 +142,7 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(self.dash.history["c03cfd52"],
                          [[ms(0), 800], [ms(200), 2500, 1], [ms(202), 2500]])
         self.dash.save()
-        restarted = Dashboard(self.state_file)
+        restarted = Leaderboard(self.state_file)
         self.assertEqual(restarted.history, self.dash.history)
         self.assertEqual(restarted.snapshot(now=t0 + 202)["badges"][0]["totals"]["throw"], 2500)
         restarted.trim(now=t0 + 3700)
@@ -156,7 +156,7 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(self.dash.history, {})
         self.dash.sample(now=t0 + 10)  # the advert heard before the reset isn't charted
         self.assertEqual(self.dash.history.get("c03cfd52", []), [])
-        restarted = Dashboard(self.state_file)
+        restarted = Leaderboard(self.state_file)
         restarted.observe("A", "b1", -50, mfg(3), stats(3, 1000, 900), now=t0 + 20)
         restarted.sample(now=t0 + 20)
         self.assertEqual(restarted.history["c03cfd52"], [[int((t0 + 20) * 1000), 100]])

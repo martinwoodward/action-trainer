@@ -1,9 +1,9 @@
-"""Air-time: throw/drop detector that reports to the dashboard over Wi-Fi.
+"""Air-time: throw/drop detector that reports to the leaderboard over Wi-Fi.
 
 Joins Wi-Fi (settings in /state/airtime_net.json, else /system/secrets.py) and
 sends a UDP status datagram (protocol.pack_status) on every state change and
-every 250 ms. It sends to the configured dashboard address, or broadcasts
-until a dashboard acks. The dashboard can rename the badge, flash its screen
+every 250 ms. It sends to the configured leaderboard address, or broadcasts
+until a leaderboard acks. The leaderboard can rename the badge, flash its screen
 and ping it. This build has no Bluetooth, so the recorder can't connect.
 
 The app shows the generated model's state (still / throw / drop) and has no
@@ -16,7 +16,7 @@ Deploy with `tools/deploy_badge.py`, which also copies `protocol.py` and
 import os
 import sys
 
-APP_DIRS = ("/state/apps/airtime", "/system/apps/airtime")
+APP_DIRS = ("/state/apps/race", "/system/apps/race")
 
 
 def _app_dir():
@@ -82,17 +82,17 @@ STEP_MIN_MS = 220
 WALK_WINDOW_MS = 2200
 EVENT_SHOW_MS = 900
 
-STATUS_EVERY_MS = 250  # heartbeat to the dashboard
+STATUS_EVERY_MS = 250  # heartbeat to the leaderboard
 STATUS_CHANGE_MS = 100  # a state change is sent at once, at most this often
 STATUS_REPEAT_MS = 60  # and repeated once, since Wi-Fi drops a few % of datagrams
 WIFI_RETRY_MS = 10000
 WIFI_JOIN_TIMEOUT_MS = 20000
 SERVER_FORGET_MS = 10000  # no ack for this long: broadcast again
-IDENTIFY_MS = 1200  # Find on the dashboard blinks the screen this long
+IDENTIFY_MS = 1200  # Find on the leaderboard blinks the screen this long
 NET_CONFIG = "/state/airtime_net.json"  # {"ssid", "password", "server"}; written by deploy_badge.py
 
 state_store = {"name": ""}
-State.load("airtime", state_store)
+State.load("airtime", state_store)  # key kept from the old app name so saved names survive
 
 badge_id = int.from_bytes(machine.unique_id()[-4:], "little")
 if not state_store.get("name"):
@@ -197,7 +197,7 @@ class Detector:
 
 
 class Net:
-    """Wi-Fi link to the dashboard: UDP status out, acks and commands in."""
+    """Wi-Fi link to the leaderboard: UDP status out, acks and commands in."""
 
     def __init__(self, detector):
         self.detector = detector
@@ -206,7 +206,7 @@ class Net:
         self.sock = None
         self.ip = None
         self.error = None
-        self.server = None  # learned from the dashboard's acks
+        self.server = None  # learned from the leaderboard's acks
         self.server_heard = 0
         self.sent = 0
         self.failed = 0
@@ -223,7 +223,7 @@ class Net:
         self.fixed = (cfg["server"], protocol.UDP_PORT) if cfg.get("server") else None
 
         try:
-            network.hostname("airtime-%04x" % (badge_id & 0xFFFF))
+            network.hostname("race-%04x" % (badge_id & 0xFFFF))
         except (AttributeError, OSError, ValueError):
             pass
         self.wlan = network.WLAN(network.STA_IF)
@@ -447,7 +447,7 @@ detector = Detector()
 classifier = Classifier()
 link = Net(detector)
 
-# Look of the dashboard's card for this badge (web/dashboard.html): its
+# Look of the leaderboard's card for this badge (web/leaderboard.html): its
 # light theme, the badge's colour and its namesake's picture. Keep PALETTE and
 # NAMESAKES in step with the page.
 PALETTE = (
@@ -497,7 +497,7 @@ def theme():
 
 
 def fmt_air(ms):
-    """Air time as the dashboard shows it: 12.3 s, 4:05 or 1:02:03."""
+    """Air time as the leaderboard shows it: 12.3 s, 4:05 or 1:02:03."""
     sec = ms / 1000
     if sec < 60:
         return "%.1f s" % sec
@@ -594,7 +594,7 @@ def draw():
     pen(BG)
     screen.rectangle(screen.clip)
 
-    # Header: colour swatch, picture and name, as on the dashboard card.
+    # Header: colour swatch, picture and name, as on the leaderboard card.
     pen(rgb)
     screen.shape(shape.rounded_rectangle(6, 14, 7, 7, 2))
     x = 18

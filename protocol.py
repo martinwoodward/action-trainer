@@ -1,6 +1,6 @@
 """Air-time wire formats, shared by the badge and the laptop tools.
 
-The Airtime app reports to the dashboard over Wi-Fi (UDP, see the end of this
+The Race app reports to the leaderboard over Wi-Fi (UDP, see the end of this
 file). The BLE formats below remain for the recorder and for older builds.
 
 Legacy advertising leaves 31 bytes; flags (3) + manufacturer AD header (2)
@@ -148,8 +148,8 @@ def unpack_mfg(data):
 
 
 # --- Wi-Fi (UDP) ------------------------------------------------------------
-# The Airtime badge app sends a status datagram to the dashboard on every state
-# change and as a heartbeat. The dashboard answers with acks (so a badge that
+# The Race badge app sends a status datagram to the leaderboard on every state
+# change and as a heartbeat. The leaderboard answers with acks (so a badge that
 # broadcasts learns the server's address) and commands. Every datagram starts
 # with MAGIC, UDP_VERSION and a one-byte type.
 UDP_PORT = 47217

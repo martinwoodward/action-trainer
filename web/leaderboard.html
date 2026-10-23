@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Air-time dashboard</title>
+<title>Air-time leaderboard</title>
 <style>
   /* Light theme of badger.github.io (src/styles/globals.css, :root.light). */
   :root {
@@ -93,7 +93,7 @@
 <main>
   <div id="chartwrap" class="surface"><canvas id="chart"></canvas></div>
   <div class="dots"></div>
-  <p id="empty">Looking for badges… They need the Wi-Fi Airtime app on the same network as this computer.</p>
+  <p id="empty">Looking for badges… They need the Wi-Fi Race app on the same network as this computer.</p>
   <div id="grid"></div>
 </main>
 <script>
@@ -138,7 +138,7 @@ const INK = {text: "#101411", muted: css.getPropertyValue("--muted-foreground"),
 $("logo").src = image(OCTOCAT.replace('fill="#101411"', 'fill="#5FED83"')).src;
 const EMOJI_FONT = '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
 // Each badge keeps one colour everywhere, matching its own screen
-// (PALETTE and SWATCH mirror badge/apps/airtime/__init__.py).
+// (PALETTE and SWATCH mirror badge/apps/race/__init__.py).
 const SWATCH = [["copilot", 1], ["mona", 3], ["octocat", 3], ["duck", 2], ["squirrel", 4]];
 const colour = id => {
   const hit = SWATCH.find(([k]) => String(nameOf[id] || "").toLowerCase().includes(k));
@@ -174,7 +174,7 @@ const liveAir = (b, now) => b.totals.throw + extra(b, now);
 
 function card(b) {
   const air = b.totals ? fmt(liveAir(b, Date.now())) : "–";
-  const since = b.totals ? (b.reset ? "since page reset" : "since badge reboot") : "no totals (old Airtime build)";
+  const since = b.totals ? (b.reset ? "since page reset" : "since badge reboot") : "no totals (old badge build)";
   const seen = b.online ? `${b.rssi} dBm` : `offline · ${Math.round(b.age)} s ago`;
   return `<div class="card surface${b.online ? "" : " offline"}" style="--c:${colour(b.badge_id)}">
     <div class="top"><span class="name"><span class="swatch"></span><span class="pic" data-sound="${b.badge_id}" title="Play ${esc(b.name)}'s sound (Shift-click: its drop sound)">${badgeIcon(b.name)}</span>${esc(b.name)}${b.online && b.state === "throw" ? '<span class="flying">In the air</span>' : ""}</span>

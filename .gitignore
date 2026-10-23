@@ -3,4 +3,4 @@ __pycache__/
 .venv/
 data/
 dist/
-dashboard_state.*
+leaderboard_state.*

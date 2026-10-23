@@ -8,7 +8,7 @@ exports a self-contained MicroPython `model.py` for a badge app in
 The badge firmware and runtime app remain in `badger/home`; this repository
 owns the laptop-side recorder, training pipeline, and generated model
 artifact. The generated model is intentionally portable: copy it into the
-target badge app (for example `badge/apps/airtime/model.py`) and have that
+target badge app (for example `badge/apps/race/model.py`) and have that
 app feed every six-axis IMU sample to `model.Tracker().update()`.
 
 ## Setup
@@ -24,7 +24,7 @@ python -m pip install -r requirements.txt
 Start the badge's Airtime/Pedometer app, then launch the local recorder:
 
 ```powershell
-python recorder.py
+python race_rec.py
 ```
 
 Open `http://localhost:8765` if it does not open automatically. Select the
@@ -108,14 +108,14 @@ The generated artifact is not automatically deployed. Copy the reviewed
 `model.py` into the target app in `badger/home` and use that app's deployment
 workflow. This keeps model generation separate from badge firmware changes.
 
-## Kiosk badge (Airtime)
+## Kiosk badge (Race)
 
 For a badge inside a plushy, this repository carries its own copy of the
-Airtime app (`badge/apps/airtime/`) and a kiosk boot script (`badge/main.py`).
-With the kiosk installed, every boot goes straight into Airtime, including a
+Race app (`badge/apps/race/`) and a kiosk boot script (`badge/main.py`).
+With the kiosk installed, every boot goes straight into Race, including a
 bump of the reset switch: there is no startup animation and no menu. The app
-has no exit; if it ever returns, the badge reboots into it. Airtime reports
-to the dashboard over Wi-Fi and has no Bluetooth, so the recorder can't
+has no exit; if it ever returns, the badge reboots into it. Race reports
+to the leaderboard over Wi-Fi and has no Bluetooth, so the recorder can't
 record from it; use a BLE build of the app for recording sessions.
 
 Deploy over USB serial (the port is auto-detected; close other serial users
@@ -137,13 +137,13 @@ python tools/deploy_badge.py kiosk --server auto
 
 `--wifi-ssid` and `--wifi-password` work too but land in your shell history.
 `--server auto` uses this computer's current IP; `--server none` makes the
-badge broadcast until the dashboard answers. Without stored credentials, the
+badge broadcast until the leaderboard answers. Without stored credentials, the
 badge uses `WIFI_SSID` and `WIFI_PASSWORD` from `/system/secrets.py`. The tool
 never prints the password; don't commit it.
 
 `kiosk` and `restore` write `/system` by remounting its FAT read-write over
 serial for the duration of the command. `main.py` boots
-`/state/apps/airtime` and falls back to the copy in `/system/apps/airtime`.
+`/state/apps/race` and falls back to the copy in `/system/apps/race`.
 
 Ways back in:
 
@@ -151,9 +151,9 @@ Ways back in:
 - Double-tap reset: the badge comes up as a `BADGER` USB drive. Eject it to
   reboot.
 
-## State-time dashboard
+## State-time leaderboard
 
-`dashboard.py` follows any number of badges over Wi-Fi: each badge sends a
+`leaderboard.py` follows any number of badges over Wi-Fi: each badge sends a
 UDP status datagram to port 47217 every 250 ms, and at once when its state
 changes. It shows each badge's **air time** (time in the `throw` state) since it was reset,
 and graphs every badge's cumulative air time on a chart that scrolls with the
@@ -168,15 +168,15 @@ Duckie orange, Mona purple, Squirrel pink, and for any other badge a colour
 picked from its id.
 
 The badge's own screen matches its card: a white card with the same colour
-swatch, picture (24×24 PNGs in `badge/apps/airtime/assets/`, copied by
+swatch, picture (24×24 PNGs in `badge/apps/race/assets/`, copied by
 `tools/deploy_badge.py`), name and air time, an **IN THE AIR** pill in the
 badge's colour while it flies, **DROPPED** in red, its battery level at the
 top right (`badge.battery_level()`, read every 2 s; red at 20% or below;
 while charging the percentage is hidden and the icon fills up on a loop), and its throw/drop counts and Wi-Fi address at the bottom.
 Names too long to fit are shortened with `..`. Find blinks the screen in the badge's colour.
 Badges named after other animals show no picture on the badge. Keep `PALETTE`
-and the namesake colours in step in `web/dashboard.html` and the app.
-Turn on **Sound** in the header and the dashboard's computer plays a sound of
+and the namesake colours in step in `web/leaderboard.html` and the app.
+Turn on **Sound** in the header and the leaderboard's computer plays a sound of
 delight for as long as a plushie is in the air: a rubber-duck squeak for Duckie, a
 chitter for Squirrel, a sparkly arpeggio for Copilot, bubble bloops for Mona,
 and a "wheee" for anyone else. Each sound repeats until its plushie lands, and
@@ -190,31 +190,31 @@ allow sound after a click on the page.
 
 The page uses the light theme of [badger.github.io](https://badger.github.io/)
 (colours, fonts and card styles from its `src/styles/globals.css`). To add more, edit
-`NAMESAKES` in `web/dashboard.html`. Points are only
+`NAMESAKES` in `web/leaderboard.html`. Points are only
 dropped from the chart once they are more than an hour old. The server saves
 the history, the known badges and the page-reset baselines to
-`dashboard_state.json`, so neither a page reload nor a server restart empties
+`leaderboard_state.json`, so neither a page reload nor a server restart empties
 the chart:
 
 ```powershell
-python dashboard.py              # http://localhost:8766
+python leaderboard.py              # http://localhost:8766
 ```
 
-- **Counting is done on the badge.** The Airtime app in this repository adds up
+- **Counting is done on the badge.** The Race app in this repository adds up
   milliseconds per state while it runs and sends the totals in every status.
   The totals stay exact while the laptop is unreachable.
 - **Network:** the badges and this computer must be on the same 2.4 GHz
   network, and it must allow client-to-client traffic. Many venue and guest
   networks isolate clients; then nothing arrives, and a phone hotspot or a
   travel router is the fix. A badge sends to its configured server, otherwise
-  broadcasts, and switches to unicast once the dashboard acks it. On macOS,
+  broadcasts, and switches to unicast once the leaderboard acks it. On macOS,
   allow incoming connections for Python if the firewall asks.
 - **Rename and Find:** each card has **Rename**, which saves the new name on
   the badge, and **Find**, which flashes the badge's screen. Both are enabled
   while the badge is online.
 - **Resets:** a badge reboot zeroes its counters. **Reset** on the page (per
-  badge or **Reset all**) stores a baseline in `dashboard_state.json`, and the
-  times shown are counted from that baseline. A restart of the dashboard keeps
+  badge or **Reset all**) stores a baseline in `leaderboard_state.json`, and the
+  times shown are counted from that baseline. A restart of the leaderboard keeps
   the baselines. The next reboot of that badge clears its baseline. **Reset
   all** also clears the chart history, on the server and in every open page.
 - **Out of range:** a badge that goes quiet greys out after 5 s. When it
@@ -229,7 +229,7 @@ python dashboard.py              # http://localhost:8766
   is back online about 7 s after a reset. While
   a badge is in the air, the page extends its line and air time live, for up
   to 3 s past the last report. To measure packet gaps, loss and ping round
-  trips, stop the dashboard and run `python tools/udp_latency.py --seconds 60`.
+  trips, stop the leaderboard and run `python tools/udp_latency.py --seconds 60`.
   The old Bluetooth builds updated about every 0.3–0.5 s (p50), with gaps up to
   4.5 s; `tools/adv_latency.py` still measures those.
 

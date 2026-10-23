@@ -1,7 +1,7 @@
-"""Measure how fast badges report to the dashboard over Wi-Fi (UDP).
+"""Measure how fast badges report to the leaderboard over Wi-Fi (UDP).
 
-Listens where the dashboard does (stop the dashboard first), acks badges like
-the dashboard, and pings each badge. For each badge it reports:
+Listens where the leaderboard does (stop the leaderboard first), acks badges like
+the leaderboard, and pings each badge. For each badge it reports:
 - gaps between status datagrams (p50/p90/max) and loss from sequence numbers;
 - ping round-trip time (p50/p90/max), an upper bound on one-way latency;
 - how many state changes arrived.
@@ -117,7 +117,7 @@ async def main():
             "state_changes": b["changes"],
         }
     if not results:
-        print("No badges heard. Are they on the same network, and is the dashboard stopped?")
+        print("No badges heard. Are they on the same network, and is the leaderboard stopped?")
     for badge_id, r in results.items():
         print(f"{r['name'] or badge_id} ({badge_id}): {r['packets']} packets, loss {r['loss_pct']}%, "
               f"gap {r['gap_ms']}, rtt {r['rtt_ms']} (ping loss {r['ping_loss_pct']}%), "

@@ -1,6 +1,6 @@
-"""Deploy the Airtime app and the kiosk boot script to a badge over USB serial.
+"""Deploy the Race app and the kiosk boot script to a badge over USB serial.
 
-    python tools/deploy_badge.py app      # app + dist/model.py -> /state/apps/airtime
+    python tools/deploy_badge.py app      # app + dist/model.py -> /state/apps/race
     python tools/deploy_badge.py kiosk    # also install badge/main.py as /system/main.py
     python tools/deploy_badge.py restore  # put the stock /system/main.py back
 
@@ -26,8 +26,8 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-APP_SRC = ROOT / "badge" / "apps" / "airtime" / "__init__.py"
-APP_ASSETS = ROOT / "badge" / "apps" / "airtime" / "assets"
+APP_SRC = ROOT / "badge" / "apps" / "race" / "__init__.py"
+APP_ASSETS = ROOT / "badge" / "apps" / "race" / "assets"
 PROTOCOL = ROOT / "protocol.py"
 MODEL = ROOT / "dist" / "model.py"
 KIOSK_MAIN = ROOT / "badge" / "main.py"
@@ -36,8 +36,10 @@ USB_ID = "2e8a:1101"
 
 NET_CONFIG = "/state/airtime_net.json"
 NET_UPLOAD = "/state/airtime_net.new"
-STATE_APP = "/state/apps/airtime"
-SYSTEM_APP = "/system/apps/airtime"
+STATE_APP = "/state/apps/race"
+SYSTEM_APP = "/system/apps/race"
+# Where the app lived under its earlier names; kiosk and restore delete these.
+OLD_APPS = ("/state/apps/airtime", "/system/apps/airtime", "/state/apps/leaderboard", "/system/apps/leaderboard")
 
 # Mirrors _boot_fat on the badge: the FAT spans user flash minus the LittleFS
 # /state partition.
@@ -62,15 +64,21 @@ def makedirs(path):
     )
 
 
-def removedir(path):
+def removedirs(*paths):
     return (
         "import os\n"
-        "try:\n"
-        f"    for name in os.listdir({path!r}):\n"
-        f"        os.remove({path!r} + '/' + name)\n"
-        f"    os.rmdir({path!r})\n"
-        "except OSError:\n"
-        "    pass\n"
+        "def rm(p):\n"
+        "    try:\n"
+        "        for name in os.listdir(p):\n"
+        "            rm(p + '/' + name)\n"
+        "        os.rmdir(p)\n"
+        "    except OSError:\n"
+        "        try:\n"
+        "            os.remove(p)\n"
+        "        except OSError:\n"
+        "            pass\n"
+        f"for p in {paths!r}:\n"
+        "    rm(p)\n"
     )
 
 
@@ -181,6 +189,7 @@ def _deploy_kiosk(port, args, net):
         *app_files(STATE_APP),
         *net,
         ["exec", REMOUNT_RW],
+        ["exec", removedirs(*OLD_APPS)],
         *app_files(SYSTEM_APP),
         ["fs", "cp", str(KIOSK_MAIN), ":/system/main.py"],
         ["exec", UNMOUNT],
@@ -193,7 +202,7 @@ def restore(port, args):
         port,
         ["exec", REMOUNT_RW],
         ["fs", "cp", str(STOCK_MAIN), ":/system/main.py"],
-        ["exec", removedir(SYSTEM_APP)],
+        ["exec", removedirs(SYSTEM_APP, *OLD_APPS)],
         ["exec", UNMOUNT],
         ["reset"],
     )
@@ -203,7 +212,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--port", help="serial port (default: auto-detect)")
     sub = parser.add_subparsers(dest="command", required=True)
-    app = sub.add_parser("app", help="copy the app and model to /state/apps/airtime")
+    app = sub.add_parser("app", help="copy the app and model to /state/apps/race")
     app.add_argument("--no-reset", action="store_true", help="start the app in place instead of resetting")
     app.set_defaults(func=deploy_app)
     kiosk = sub.add_parser("kiosk", help="install the app and the kiosk /system/main.py")
@@ -211,7 +220,7 @@ def main():
     for p in (app, kiosk):
         p.add_argument("--wifi-ssid", help="Wi-Fi network (default: $AIRTIME_WIFI_SSID, else keep)")
         p.add_argument("--wifi-password", help="Wi-Fi password (default: $AIRTIME_WIFI_PASSWORD, else keep)")
-        p.add_argument("--server", help="dashboard IP, 'auto' (this computer) or 'none' (broadcast)")
+        p.add_argument("--server", help="leaderboard IP, 'auto' (this computer) or 'none' (broadcast)")
     sub.add_parser("restore", help="restore the stock /system/main.py").set_defaults(func=restore)
     args = parser.parse_args()
     args.func(args.port or find_port(), args)

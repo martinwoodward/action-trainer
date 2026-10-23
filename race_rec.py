@@ -5,7 +5,7 @@ connect over GATT, pick an action, and record a session; the badge streams
 every IMU sample (with its detector state) and the session is saved to
 data/<label>/<timestamp>_<badge>.csv plus a .json sidecar.
 
-Usage:  python recorder.py [--port 8765] [--no-browser]
+Usage:  python race_rec.py [--port 8765] [--no-browser]
 """
 import argparse
 import asyncio
@@ -481,7 +481,7 @@ async def ws_handler(request):
 
 async def index(_request):
     # no-store so a restarted recorder's page changes show on a normal reload
-    html = (WEB_DIR / "recorder.html").read_text(encoding="utf-8")
+    html = (WEB_DIR / "race_rec.html").read_text(encoding="utf-8")
     return web.Response(text=html, content_type="text/html", headers={"Cache-Control": "no-store"})
 
 

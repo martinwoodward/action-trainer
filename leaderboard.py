@@ -1,13 +1,13 @@
-"""Live dashboard: time each badge has spent in each state since it was reset.
+"""Live leaderboard: time each badge has spent in each state since it was reset.
 
 Badges report over Wi-Fi: each sends a UDP status datagram
 (protocol.pack_status) to UDP port protocol.UDP_PORT on every state change and
 every 250 ms, with its milliseconds in still / throw / drop since boot. The
-dashboard acks each badge (so broadcasting badges learn where it is) and can
+leaderboard acks each badge (so broadcasting badges learn where it is) and can
 rename, identify and ping badges. The page can also zero a badge; that stores
 a baseline here, which a badge reboot clears.
 
-Usage:  python dashboard.py [--port 8766] [--udp-port 47217] [--no-browser]
+Usage:  python leaderboard.py [--port 8766] [--udp-port 47217] [--no-browser]
 """
 import argparse
 import asyncio
@@ -22,7 +22,7 @@ import protocol
 
 ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "web"
-STATE_FILE = ROOT / "dashboard_state.json"
+STATE_FILE = ROOT / "leaderboard_state.json"
 STATES = ("still", "throw", "drop")
 # Advertised state codes (protocol.STATE_*) folded into the model's three.
 STATE_BY_CODE = {0: "still", 1: "still", 2: "throw", 3: "throw", 4: "drop", 5: "still"}
@@ -31,10 +31,10 @@ HISTORY_S = 3600  # air-time history kept for the graph
 SAVE_EVERY_S = 10.0
 PUSH_MIN_S = 0.05  # reports heard within this are pushed to pages together
 TICK_S = 0.5  # pages also get a status this often, to age offline badges
-ACK_EVERY_S = 2.0  # how often each badge is told where the dashboard is
+ACK_EVERY_S = 2.0  # how often each badge is told where the leaderboard is
 
 
-class Dashboard:
+class Leaderboard:
     def __init__(self, state_file=STATE_FILE):
         self.state_file = state_file
         self.badges = {}  # badge_id -> record
@@ -229,13 +229,13 @@ async def main():
     parser.add_argument("--state", type=Path, default=STATE_FILE, help="baselines, badges and history (default: %(default)s)")
     args = parser.parse_args()
 
-    dash = Dashboard(args.state)
+    dash = Leaderboard(args.state)
     sockets = set()
     heard = asyncio.Event()
     link = BadgeLink(dash, heard)
 
     async def index(_request):
-        html = (WEB_DIR / "dashboard.html").read_text(encoding="utf-8")
+        html = (WEB_DIR / "leaderboard.html").read_text(encoding="utf-8")
         return web.Response(text=html, content_type="text/html", headers={"Cache-Control": "no-store"})
 
     async def ws_handler(request):
@@ -301,7 +301,7 @@ async def main():
     loop = asyncio.get_running_loop()
     await loop.create_datagram_endpoint(lambda: link, local_addr=("0.0.0.0", args.udp_port))
     url = "http://localhost:%d" % args.port
-    print("Dashboard on", url, "| badges report to UDP port", args.udp_port, flush=True)
+    print("Leaderboard on", url, "| badges report to UDP port", args.udp_port, flush=True)
     if not args.no_browser:
         webbrowser.open(url)
     try:

@@ -1,6 +1,6 @@
 """Measure how promptly this computer hears each badge's adverts.
 
-Scans passively (like the dashboard) for a fixed time and prints, per badge:
+Scans passively (like the leaderboard) for a fixed time and prints, per badge:
 
 - gap: time between advert callbacks, and between adverts with a new payload
   (the badge's advert sequence number changed);
@@ -24,7 +24,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from bleak import BleakScanner  # noqa: E402
 
-from dashboard import STATE_BY_CODE, decode  # noqa: E402
+from leaderboard import STATE_BY_CODE  # noqa: E402
+from protocol import COMPANY_ID, STATS_UUID, unpack_mfg, unpack_stats  # noqa: E402
+
+
+def decode(adv):
+    """Badge advert and stats from a BLE scan result (BLE builds only)."""
+    data = adv.manufacturer_data.get(COMPANY_ID)
+    if not data:
+        return None, None
+    mfg = unpack_mfg(COMPANY_ID.to_bytes(2, "little") + data)
+    return mfg, unpack_stats(adv.service_data.get(STATS_UUID))
 
 
 def pct(values, q):

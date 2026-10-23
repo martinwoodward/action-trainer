@@ -1,5 +1,5 @@
 # Kiosk boot: every boot (including the reset switch) goes straight into the
-# Airtime app. No startup animation, no menu, and no way out of the app.
+# Race app. No startup animation, no menu, and no way out of the app.
 #
 # Escape routes:
 # - Double-tap reset: USB mass storage (same as upstream badger/home main.py).
@@ -8,7 +8,7 @@
 import os
 import powman
 
-APP_DIRS = ("/state/apps/airtime", "/system/apps/airtime")
+APP_DIRS = ("/state/apps/race", "/system/apps/race")
 
 if powman.get_wake_reason() == powman.WAKE_DOUBLETAP:
     import _msc
@@ -31,7 +31,7 @@ while badge.pressed() or badge.held() or badge.released():
 
 app = _app_dir()
 if app is None:
-    print("kiosk: no airtime app in", APP_DIRS)
+    print("kiosk: no race app in", APP_DIRS)
     import time
     time.sleep(5)  # leave a window for serial to attach before rebooting
 else:

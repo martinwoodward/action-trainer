@@ -31,12 +31,12 @@ That is roughly **10× better at the median and 10–30× better in the tail**, 
 - **One central per badge.** The stock MicroPython rp2/BTstack build used by the Badger 2350 allows one connection: `MAX_NR_HCI_CONNECTIONS=1`.[^mp-cfg]
 - **A connected badge stops advertising.** BTstack suppresses adverts while the peripheral connection slot is full.[^bt-adv]
 - **Consequences:**
-  - The dashboard and the recorder cannot both be connected to one badge.
-  - A connected badge disappears from passive scanners, including the current dashboard.
+  - The leaderboard and the recorder cannot both be connected to one badge.
+  - A connected badge disappears from passive scanners, including the current leaderboard.
 
 ## 1. Background: the current design and measured baseline
 
-The dashboard (`dashboard.py`) only **scans**. Each badge broadcasts its state and totals in the scan response (`protocol.py`, `STATS_UUID 0xA17E`). The recorder (`recorder.py`) **connects** with `BleakClient` and subscribes to `STREAM_UUID`. It receives about 25 notifications per second (`NOTIFY_MIN_MS=40`), with the state in every sample, which is why it feels near real time.
+The leaderboard (`leaderboard.py`) only **scans**. Each badge broadcasts its state and totals in the scan response (`protocol.py`, `STATS_UUID 0xA17E`). The recorder (`race_rec.py`) **connects** with `BleakClient` and subscribes to `STREAM_UUID`. It receives about 25 notifications per second (`NOTIFY_MIN_MS=40`), with the state in every sample, which is why it feels near real time.
 
 Measured with `tools/adv_latency.py` (results in the session folder, not the repo):
 
@@ -101,7 +101,7 @@ Movella's manual: *"BLE performance cannot be guaranteed if the connection limit
 3. **The peripheral can't choose the connection interval.** MicroPython exposes no connection-parameter request; it can only observe the result via `_IRQ_CONNECTION_UPDATE`.
 4. **Throughput per link:** about one ACL packet per connection event on CYW43439 (pico-sdk#1342). That's ample for a few state notifications per second, and the recorder's 25/s stream already works.
 5. **Known bug:** notifications may stop after a reconnect (micropython#12801). Re-subscribe on every connect.
-6. **Firmware is already partly ready.** `badge/apps/airtime/__init__.py` loops `gatts_notify` over a `connected` set. However, the stream carries per-sample state, **not the cumulative totals** that the dashboard charts. Those are only in the advert today.
+6. **Firmware is already partly ready.** `badge/apps/race/__init__.py` loops `gatts_notify` over a `connected` set. However, the stream carries per-sample state, **not the cumulative totals** that the leaderboard charts. Those are only in the advert today.
 7. **Power:** not measured. A held connection at 15–30 ms is probably comparable to or more expensive than advertising every 20 ms. Measure it before relying on battery life.
 
 ## 5. Pairing vs connecting
@@ -120,11 +120,11 @@ Sources: Nordic DevZone 11939, Bluetooth SIG blog, Punch Through.[^pt-ci] Notifi
 flowchart LR
   subgraph Now["Today: advertising (scan)"]
     B1[Badge state change] -->|"≤100 ms change limit + 0-30 ms adv delay"| R1[Radio]
-    R1 -->|"CoreBluetooth coalescing: 0.3 s – 4.5 s"| D1[dashboard.py]
+    R1 -->|"CoreBluetooth coalescing: 0.3 s – 4.5 s"| D1[leaderboard.py]
   end
   subgraph Conn["Option: GATT connection"]
     B2[Badge state change] -->|"≤1 frame (~22 ms)"| N[gatts_notify]
-    N -->|"≤1 connection interval: 15-50 ms (×nCE retries)"| D2[dashboard.py]
+    N -->|"≤1 connection interval: 15-50 ms (×nCE retries)"| D2[leaderboard.py]
   end
   D1 --> W[Web page via WebSocket, about 50 ms push floor]
   D2 --> W
@@ -162,9 +162,9 @@ The end-to-end figure on the page includes about 50 ms for the server push and W
 
 ## 7. Trade-offs and risks
 
-- **Recorder conflict:** each badge accepts one central. While the dashboard is connected, `recorder.py` can't connect, and the reverse. The dashboard would need to release a badge on demand.
-- **Invisible while connected:** connected badges stop advertising, so the scan path can't serve as a live backup for the same badge. The dashboard must treat "connected" and "advertising" as exclusive states.
-- **Totals over GATT:** the dashboard needs `air_ms` and throw counts, which only the advert carries today. This needs a new characteristic or a field in the stream. Change `protocol.py` and `badger/home` in step.
+- **Recorder conflict:** each badge accepts one central. While the leaderboard is connected, `race_rec.py` can't connect, and the reverse. The leaderboard would need to release a badge on demand.
+- **Invisible while connected:** connected badges stop advertising, so the scan path can't serve as a live backup for the same badge. The leaderboard must treat "connected" and "advertising" as exclusive states.
+- **Totals over GATT:** the leaderboard needs `air_ms` and throw counts, which only the advert carries today. This needs a new characteristic or a field in the stream. Change `protocol.py` and `badger/home` in step.
 - **Scale:** 4 badges is fine on macOS and borderline on Windows. More than 8 isn't reliable on either built-in radio.
 - **Reconnect storms:** plushies thrown out of range drop their links, and reconnecting takes seconds. Connect to badges one at a time, with backoff, to avoid controller thrash.
 - **Battery:** unmeasured; measure before the event.
@@ -175,7 +175,7 @@ The end-to-end figure on the page includes about 50 ms for the server push and W
 | Approach | Devices | Latency | Effort | macOS/Windows |
 |---|---|---|---|---|
 | Current scan (20 ms adverts) | unlimited | 0.3–0.6 s median, seconds tail | done | yes |
-| GATT connections on the built-in radio | ~4–8 (macOS), ~3–5 (Windows) | ~20–60 ms | medium (dashboard plus protocol) | yes |
+| GATT connections on the built-in radio | ~4–8 (macOS), ~3–5 (Windows) | ~20–60 ms | medium (leaderboard plus protocol) | yes |
 | **USB "base-station" badge or MCU** scanning with duplicates off and forwarding over serial | unlimited | likely ≤100 ms (not benchmarked) | medium (firmware plus serial reader) | yes; bypasses the OS stack |
 | Linux/BlueZ host (Pi) with `DuplicateData` | unlimited (scan) | likely sub-second (not benchmarked) | low; bleak runs unchanged[^bleak-bluez] | serve the page to the laptop |
 | nRF52840/BG22 dongle as a central (pc-ble-driver-py, pybgapi) | 20 (Nordic) / up to 32 (SiLabs) | ~20–60 ms | high; replaces bleak | yes |
@@ -189,7 +189,7 @@ The end-to-end figure on the page includes about 50 ms for the server push and W
    - Release a badge when the recorder needs it.
 2. **Before building it, run a hardware test:**
    - Connect 1, 2, 3, then 4 badges with plain bleak and log the gaps between notifications and any disconnects for 10 minutes each.
-   - Do this on the actual dashboard Mac and on the target Windows machine, with Wi-Fi active.
+   - Do this on the actual leaderboard Mac and on the target Windows machine, with Wi-Fi active.
 3. **On Windows, avoid Intel AX-series radios** for this, or use a known-good USB dongle as the only active radio.
 4. **To scale beyond about 8 badges, use a base-station badge on USB** (a second, unbadged CYW43439 board) rather than connections. It avoids every OS limit and recorder conflict.
 5. **Don't pursue pairing or bonding.** It adds complexity without reducing latency.
