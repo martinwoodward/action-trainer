@@ -2,14 +2,14 @@
 
 Action Trainer records labeled accelerometer/gyroscope sessions from a
 Universe badge over Bluetooth, trains a small decision-tree classifier, and
-exports a self-contained MicroPython `model.py` for a badge app in
-[`badger/home`](https://github.com/badger/home).
+exports a self-contained MicroPython `model.py`.
 
-The badge firmware and runtime app remain in `badger/home`; this repository
-owns the laptop-side recorder, training pipeline, and generated model
-artifact. The generated model is intentionally portable: copy it into the
-target badge app (for example `badge/apps/pedometer/model.py`) and have that
-app call `predict_window()` with a one-second window of six-axis IMU samples.
+This repository holds both sides: the laptop recorder and training pipeline,
+and the **Airtime** badge app (`badge/apps/airtime/`) that streams IMU data to
+the recorder, accepts models over BLE, and runs them. The badge firmware and
+the other badge apps live in [`badger/home`](https://github.com/badger/home).
+The generated model is portable: any badge app can call `predict_window()`
+with a one-second window of six-axis IMU samples.
 
 ## Setup
 
@@ -21,7 +21,32 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-Start the badge's Airtime/Pedometer app, then launch the local recorder:
+## Install the badge app
+
+Plug the badge in over USB-C, close anything else using its serial port
+(Thonny, Web Serial pages), then:
+
+```powershell
+python tools/deploy_badge.py --autostart
+```
+
+This copies `badge/apps/airtime/` to `/state/apps/airtime` on the badge and
+finds the port automatically (pass `--port COM13` if several badges are
+attached). Press the badge's **reset** button to start it.
+
+- `--autostart` launches Airtime after the boot animation on power-on, reset
+  and wake. It patches `/system/main.py` once (the stock file is saved to
+  `/state/main.orig.py`); **HOME** still exits to the menu and the badge still
+  sleeps normally. `--no-autostart` goes back to booting into the menu.
+- `--name martin` sets the name the badge advertises.
+- `--model dist/model.py` installs a model over USB. The recorder normally
+  sends it over BLE instead.
+- `--run` starts the app over serial straight away, printing its output.
+
+To install it for good (it then shows in the menu), put the badge in USB
+mass-storage mode and copy `badge/apps/airtime` to `system/apps/airtime`.
+
+Start Airtime on the badge, then launch the local recorder:
 
 ```powershell
 python recorder.py
@@ -91,20 +116,20 @@ one if it scores at least as well. Otherwise it keeps the current model and
 offers **Deploy anyway**. The deployed model and its scorecard are kept in
 `dist/deployed_model.py` and `dist/deployed.json`.
 
-To ship a model with an app, copy the reviewed `model.py` into the target app
-in `badger/home` and use that app's deployment workflow.
+To ship a model with another app, copy the reviewed `model.py` into that app
+in `badger/home` and use its deployment workflow.
 
 ## BLE protocol
 
-`protocol.py` mirrors the advertisement and GATT packet contract implemented
-by `badge/apps/airtime/protocol.py` in `badger/home`. Keep the UUIDs, packet
-field order, and struct formats synchronized; `tests/test_stream.py` checks
-the recording packet format.
+`protocol.py` defines the advertisement and GATT packet contract. The badge app
+has an identical copy at `badge/apps/airtime/protocol.py` (the badge can only
+import files from the app's folder); `tests/test_badge_tools.py` fails if the
+two differ, and `tests/test_stream.py` checks the recording packet format.
 
 The recorder pings a connected badge every 2 s and reconnects automatically,
 backing off from 2 s to 15 s between failed attempts. Connection events are
 logged with timestamps to `data/recorder.log`. The badge's CYW43 BLE stack can
-wedge (centrals connect but see no services), so the pedometer app restarts
+wedge (centrals connect but see no services), so the Airtime app restarts
 its BLE stack after two links that never send a command, or after 2 minutes
 without a working link.
 
@@ -113,3 +138,7 @@ without a working link.
 ```powershell
 python -m unittest discover -s tests
 ```
+
+The badge app's detector and protocol are replayed on the laptop by
+`tests/test_detect.py`. `python tools/make_icon.py` regenerates the app's
+24×24 `icon.png` (needs Pillow).

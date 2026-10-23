@@ -1,14 +1,17 @@
 # Copilot instructions for Action Trainer
 
-This repository is the laptop-side tool for the **GitHub Universe 2026 badge**.
-It records labelled IMU sessions over Bluetooth, trains a small decision tree,
-and exports a MicroPython `model.py`. The badge apps that use the model live in
-[`badger/home`](https://github.com/badger/home), under `badge/apps/`. Edit
-firmware and apps there, not here.
+This repository trains activity models for the **GitHub Universe 2026 badge**.
+The laptop side records labelled IMU sessions over Bluetooth, trains a small
+decision tree and exports a MicroPython `model.py`. The badge side is the
+**Airtime** app in `badge/apps/airtime/`, which streams IMU data, accepts
+models over BLE and runs them. Edit Airtime here. The firmware and the other
+badge apps live in [`badger/home`](https://github.com/badger/home).
 
 ## Before you start
 
 - Read `docs/badge/AGENTS.md` before writing or changing badge app code.
+- Use the `badge-deploy` skill (`.github/skills/badge-deploy/SKILL.md`) to
+  install, test or debug Airtime on a badge.
 - Read `docs/badge/USB_SERIAL.md` before connecting to a badge or changing its
   filesystem.
 - Read `docs/badge/HARDWARE.md` before using raw GPIO, I2C, ADC, IR, power,
@@ -22,9 +25,15 @@ firmware and apps there, not here.
 - `recorder.py` with `web/recorder.html`: a bleak + aiohttp recorder UI at
   http://localhost:8765. Sessions are saved to `data/<label>/*.csv` + `.json`.
 - `listen.py`: console listener for badge advertisements.
-- `protocol.py`: the advertisement and GATT format. It mirrors
-  `badge/apps/airtime/protocol.py` in `badger/home`, so keep UUIDs, struct
-  formats and field order identical on both sides.
+- `protocol.py`: the advertisement and GATT format.
+  `badge/apps/airtime/protocol.py` must be an identical copy (the badge only
+  imports from the app folder); edit both together. `tests/test_badge_tools.py`
+  enforces this.
+- `badge/apps/airtime/`: the badge app (`__init__.py` UI and model runner,
+  `ble.py` GATT server, `detect.py` rule-based detector, `icon.png`).
+  `tests/test_detect.py` replays it on the laptop.
+- `tools/deploy_badge.py`: installs Airtime over USB serial, with optional
+  autostart, name and model. `tools/make_icon.py` regenerates the icon.
 - `features.py` and `train.py`: 1 s windows with a 250 ms hop, a
   `DecisionTreeClassifier` (max depth 6), grouped cross-validation by session,
   and export to `dist/model.py` plus `dist/report.json`.
@@ -59,19 +68,22 @@ firmware and apps there, not here.
   raw int16. Accel is ±2 g at 16384 LSB/g; the sample rate is the app frame
   rate (about 50 Hz while drawing), so use measured timestamps.
 - Each app needs `badge/apps/<name>/__init__.py` and a 24×24 `icon.png`.
-- **Quick test:** from a `badger/home` checkout,
-  `python -m mpremote connect <port> mount badge` exposes the local tree at
-  `/remote`. PNG assets don't stream reliably through the mount, so
-  asset-heavy apps should use the dev deploy below.
-- **Dev deploy:** copy the app to `/state/apps/<name>` with
-  `mpremote fs cp ... :/state/apps/<name>/`, then start it with
-  `python -m mpremote connect <port> exec "exec(open('/state/apps/<name>/__init__.py').read())"`.
-  `badger/home` has `tools/airtime/deploy.ps1` for the airtime app.
+- Airtime must call `badge.mode(LORES | VSYNC)` at start: the boot animation
+  leaves the display in HIRES when the app autostarts.
+- **Deploy Airtime:** `python tools/deploy_badge.py`, then press the badge's
+  reset button. **Whenever you install it, ask the user whether it should
+  autostart**, and pass `--autostart` or `--no-autostart`. Autostart must keep
+  the boot animation, the reset button, HOME (back to the menu) and sleep
+  working.
+- **Quick test without copying:** `python -m mpremote connect <port> mount badge`
+  exposes `badge/` at `/remote`. PNG assets don't stream reliably through the
+  mount.
 - **Permanent install:** put the badge in USB mass-storage mode and copy the
   app into `system/apps/`. Eject, then reset the badge.
-- **Model deploy:** copy `dist/model.py` into the target app in `badger/home`
-  (for example `badge/apps/pedometer/model.py`) and deploy that app. For quick
-  iteration, copy it to `:/state/apps/<name>/model.py` and reset.
-- Never commit secrets. Keep `badge/secrets.py` empty in `badger/home`.
+- **Model deploy:** the recorder's **Train & deploy** sends `dist/model.py`
+  over BLE and the app saves it to `/state/airtime_model.py`. Without BLE, use
+  `python tools/deploy_badge.py --skip-app --model dist/model.py`. To use a
+  model in another app, copy `dist/model.py` into that app in `badger/home`.
+- Never commit secrets (Wi-Fi passwords, tokens) to the badge app or tools.
 - Don't commit recorded `data/` or `dist/` unless the user asks; they are in
   `.gitignore`.
