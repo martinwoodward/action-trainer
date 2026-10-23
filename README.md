@@ -171,8 +171,8 @@ The badge's own screen matches its card: a white card with the same colour
 swatch, picture (24×24 PNGs in `badge/apps/airtime/assets/`, copied by
 `tools/deploy_badge.py`), name and air time, an **IN THE AIR** pill in the
 badge's colour while it flies, **DROPPED** in red, its battery level at the
-top right (`badge.battery_level()`, read every 2 s; `+` while charging, red at
-20% or below), and its throw/drop counts and Wi-Fi address at the bottom.
+top right (`badge.battery_level()`, read every 2 s; red at 20% or below;
+while charging the percentage is hidden and the icon fills up on a loop), and its throw/drop counts and Wi-Fi address at the bottom.
 Names too long to fit are shortened with `..`. Find blinks the screen in the badge's colour.
 Badges named after other animals show no picture on the badge. Keep `PALETTE`
 and the namesake colours in step in `web/dashboard.html` and the app.

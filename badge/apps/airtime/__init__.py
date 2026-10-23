@@ -538,28 +538,44 @@ def battery():
     return _battery
 
 
+CHARGE_STEP_MS = 300  # the charging animation adds a fifth of the fill per step
+
+
 def draw_battery(right, top):
-    """Battery icon and percentage ending at `right`; returns its left edge."""
+    """Battery icon ending at `right`; returns its left edge.
+
+    On battery it shows the percentage; while charging the reading is
+    meaningless, so the icon just fills up over and over instead.
+    """
     b = battery()
     if b["level"] is None:
         return right
     level = b["level"]
     screen.font = LABEL_FONT
-    text = ("+%d%%" if b["charging"] else "%d%%") % level
-    tw, th = screen.measure_text(text)
-    tw = int(tw)
-    fill = DROP_RGB if level <= LOW_BATTERY and not b["charging"] else INK
-    pen(MUTED)
-    screen.text(text, right - tw, top)
+    _, th = screen.measure_text("0")
+    if b["charging"]:
+        tw = -3  # no text; the icon sits flush with `right`
+        width = 2 * (badge.ticks // CHARGE_STEP_MS % 6)  # 0, 2, ... 10
+        fill = INK
+    else:
+        text = "%d%%" % level
+        tw, _ = screen.measure_text(text)
+        tw = int(tw)
+        width = max(1, 10 * level // 100)
+        fill = DROP_RGB if level <= LOW_BATTERY else INK
+        pen(MUTED)
+        screen.text(text, right - tw, top)
     # Body 14x8 with a 2x4 nub, left of the text.
     bx = right - tw - 21
     by = top + int(th) // 2 - 4
+    pen(MUTED)
     screen.rectangle(bx, by, 14, 8)
     screen.rectangle(bx + 14, by + 2, 2, 4)
     pen(BG)
     screen.rectangle(bx + 1, by + 1, 12, 6)
-    pen(fill)
-    screen.rectangle(bx + 2, by + 2, max(1, 10 * level // 100), 4)
+    if width:
+        pen(fill)
+        screen.rectangle(bx + 2, by + 2, width, 4)
     return bx
 
 
