@@ -80,6 +80,13 @@ class BadgeLinkTests(unittest.TestCase):
         self.assertTrue(self.heard.is_set())
         self.assertEqual(self.transport.sent, [(protocol.pack_ack(0xC03CFD52), addr)])  # once per ACK_EVERY_S
 
+    def test_ping_is_always_acked_at_once(self):
+        addr = ("192.168.9.211", 47217)
+        self.link.datagram_received(status_packet(), addr)  # acked, starts the ACK_EVERY_S timer
+        self.link.datagram_received(protocol.pack_ping(0xC03CFD52), addr)
+        self.link.datagram_received(protocol.pack_ping(0xC03CFD52), addr)
+        self.assertEqual(self.transport.sent, [(protocol.pack_ack(0xC03CFD52), addr)] * 3)
+
     def test_commands_go_to_the_last_address_and_replies_are_routed(self):
         self.assertFalse(self.link.command("c03cfd52", protocol.CMD_IDENTIFY))  # never heard
         self.link.datagram_received(status_packet(), ("10.0.0.5", 5000))

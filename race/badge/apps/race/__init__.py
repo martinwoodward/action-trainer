@@ -3,7 +3,8 @@
 Joins Wi-Fi (settings in /state/airtime_net.json, else /system/secrets.py) and
 sends a UDP status datagram (protocol.pack_status) on every state change and
 every 250 ms. It sends to the configured leaderboard address, or broadcasts
-until a leaderboard acks. The leaderboard can rename the badge, flash its screen
+until a leaderboard acks. Every 30 s it pings the leaderboard; if three pings
+go unanswered it broadcasts again until a leaderboard acks. The leaderboard can rename the badge, flash its screen
 and ping it. This build has no Bluetooth, so the recorder can't connect.
 
 The app shows the generated model's state (still / throw / drop) and has no
@@ -87,7 +88,9 @@ STATUS_CHANGE_MS = 100  # a state change is sent at once, at most this often
 STATUS_REPEAT_MS = 60  # and repeated once, since Wi-Fi drops a few % of datagrams
 WIFI_RETRY_MS = 10000
 WIFI_JOIN_TIMEOUT_MS = 20000
-SERVER_FORGET_MS = 10000  # no ack for this long: broadcast again
+PING_EVERY_MS = 30000  # check the leaderboard is still there this often
+PING_WAIT_MS = 1000  # wait this long for its ack before trying again
+PING_TRIES = 3  # unanswered pings before going back to broadcast discovery
 IDENTIFY_MS = 1200  # Find on the leaderboard blinks the screen this long
 NET_CONFIG = "/state/airtime_net.json"  # {"ssid", "password", "server"}; written by deploy_race.py
 
@@ -206,8 +209,12 @@ class Net:
         self.sock = None
         self.ip = None
         self.error = None
-        self.server = None  # learned from the leaderboard's acks
+        self.server = None  # where statuses go; None = broadcast (auto discovery)
         self.server_heard = 0
+        self._ping_at = 0
+        self._ping_first = 0
+        self._ping_last = 0
+        self._ping_tries = 0
         self.sent = 0
         self.failed = 0
         self.joins = 0
@@ -220,6 +227,7 @@ class Net:
         cfg = load_net_config()
         self.ssid = cfg.get("ssid")
         self.password = cfg.get("password", "")
+        # A configured server is only where we start; it's dropped like a learned one if it stops answering.
         self.fixed = (cfg["server"], protocol.UDP_PORT) if cfg.get("server") else None
 
         try:
@@ -269,6 +277,7 @@ class Net:
         sock.setblocking(False)
         self.sock = sock
         self.error = None
+        self._use_server(self.fixed, badge.ticks)
 
     def _close(self):
         if self.sock is not None:
@@ -306,11 +315,36 @@ class Net:
             self._join(now)
 
     def destination(self, now):
-        if self.fixed:
-            return self.fixed
-        if self.server and now - self.server_heard < SERVER_FORGET_MS:
-            return self.server
-        return (self._bcast, protocol.UDP_PORT)
+        return self.server or (self._bcast, protocol.UDP_PORT)
+
+    def _use_server(self, server, now):
+        self.server = server
+        self._ping_tries = 0
+        self._ping_at = now + PING_EVERY_MS
+
+    def _check_server(self, now):
+        """Ping the server every PING_EVERY_MS. Any ack or command since the
+        first try answers it; after PING_TRIES silent tries, go back to
+        broadcasting until a leaderboard acks us."""
+        if self.server is None:
+            return
+        if self._ping_tries and self.server_heard >= self._ping_first:
+            self._use_server(self.server, now)
+        if not self._ping_tries:
+            if now < self._ping_at:
+                return
+            self._ping_first = now
+        elif now - self._ping_last < PING_WAIT_MS:
+            return
+        elif self._ping_tries >= PING_TRIES:
+            self._use_server(None, now)
+            return
+        try:
+            self.sock.sendto(protocol.pack_ping(badge_id), self.server)
+        except OSError:
+            pass
+        self._ping_tries += 1
+        self._ping_last = now
 
     def send_status(self, now):
         d = self.detector
@@ -357,7 +391,9 @@ class Net:
                 continue
             kind, _, payload = msg
             if kind in (protocol.PKT_ACK, protocol.PKT_CMD):
-                self.server = (addr[0], protocol.UDP_PORT)
+                server = (addr[0], protocol.UDP_PORT)
+                if server != self.server:
+                    self._use_server(server, now)
                 self.server_heard = now
             if kind == protocol.PKT_CMD and payload:
                 self._command(now, payload[:1], payload[1:], addr)
@@ -384,6 +420,7 @@ class Net:
         if self.sock is None:
             return
         self._receive(now)
+        self._check_server(now)
         if now - self._last_send >= STATUS_EVERY_MS or (
             shown_state() != self._sent_state and now - self._last_send >= STATUS_CHANGE_MS
         ) or (self._repeat_at is not None and now >= self._repeat_at):
@@ -391,7 +428,7 @@ class Net:
 
     def label(self):
         if self.sock is not None:
-            return "WiFi %s%s" % (self.ip, "" if self.server or self.fixed else " bc")
+            return "WiFi %s%s" % (self.ip, "" if self.server else " bc")
         return "WiFi %s" % (self.error or "...")
 
 

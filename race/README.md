@@ -208,7 +208,9 @@ python leaderboard.py              # http://localhost:8766
   network, and it must allow client-to-client traffic. Many venue and guest
   networks isolate clients; then nothing arrives, and a phone hotspot or a
   travel router is the fix. A badge sends to its configured server, otherwise
-  broadcasts, and switches to unicast once the leaderboard acks it. On macOS,
+  broadcasts, and switches to unicast once the leaderboard acks it. Every 30 s
+  it pings its server; after three unanswered pings (about 3 s) it goes back to
+  broadcast auto-discovery, even if the server was configured. On macOS,
   allow incoming connections for Python if the firewall asks.
 - **Rename and Find:** each card has **Rename**, which saves the new name on
   the badge, and **Find**, which flashes the badge's screen. Both are enabled
