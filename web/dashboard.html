@@ -80,9 +80,11 @@
   <label class="meta">window
     <select id="span">
       <option value="60">1 min</option>
+      <option value="120">2 min</option>
+      <option value="180">3 min</option>
+      <option value="240">4 min</option>
       <option value="300" selected>5 min</option>
-      <option value="900">15 min</option>
-      <option value="3600">1 h</option>
+      <option value="600">10 min</option>
     </select>
   </label>
   <button id="sound" title="Play each plushie's sound while it is in the air, and UGF when one is dropped">Sound off</button>
@@ -373,7 +375,7 @@ function draw() {
     g.beginPath(); g.moveTo(L, y(v)); g.lineTo(W - R, y(v)); g.stroke();
     g.fillText(fmt(v), L - 8, y(v));
   }
-  const tick = span <= 60000 ? 10000 : span <= 300000 ? 60000 : span <= 900000 ? 180000 : 600000;
+  const tick = span <= 60000 ? 10000 : span <= 180000 ? 30000 : span <= 300000 ? 60000 : 120000;
   g.textAlign = "center"; g.textBaseline = "top";
   for (let t = Math.ceil(t0 / tick) * tick; t <= now; t += tick) {
     g.beginPath(); g.moveTo(x(t), T); g.lineTo(x(t), T + ph); g.stroke();

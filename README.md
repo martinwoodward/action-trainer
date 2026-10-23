@@ -157,7 +157,7 @@ Ways back in:
 UDP status datagram to port 47217 every 250 ms, and at once when its state
 changes. It shows each badge's **air time** (time in the `throw` state) since it was reset,
 and graphs every badge's cumulative air time on a chart that scrolls with the
-clock. You can choose a 1 min, 5 min, 15 min or 1 h window. A badge named
+clock. You can choose a 1, 2, 3, 4, 5 or 10 min window. A badge named
 after an animal or a mascot (for example Duckie, Squirrel or Copilot) shows
 that picture at the leading end of its line, and next to its name on its card.
 Duckie is drawn as a yellow rubber duck; Copilot and Mona use the Copilot and
