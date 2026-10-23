@@ -87,3 +87,10 @@ badge apps live in [`badger/home`](https://github.com/badger/home).
 - Never commit secrets (Wi-Fi passwords, tokens) to the badge app or tools.
 - Don't commit recorded `data/` or `dist/` unless the user asks; they are in
   `.gitignore`.
+
+## Race fork
+
+`race/` is a logical fork focused on a plushy air-time leaderboard, with its
+own recorder, trainer, protocol, leaderboard and kiosk badge app. Keep Race
+work inside `race/` and follow [`race/AGENTS.md`](../race/AGENTS.md); don't
+change the root Airtime files for it.

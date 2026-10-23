@@ -142,3 +142,10 @@ python -m unittest discover -s tests
 The badge app's detector and protocol are replayed on the laptop by
 `tests/test_detect.py`. `python tools/make_icon.py` regenerates the app's
 24×24 `icon.png` (needs Pillow).
+
+## Race fork
+
+[`race/`](race/README.md) is a separate fork of this tool for an air-time
+leaderboard: badges inside plushies report over Wi-Fi to `race/leaderboard.py`.
+It has its own recorder, trainer, protocol copy and kiosk badge app, and
+imports nothing from this folder. See [`race/README.md`](race/README.md).

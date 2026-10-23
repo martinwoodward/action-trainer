@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Air-time recorder</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3; --dim:#8b949e; --accent:#2f81f7; --rec:#f85149; --ok:#3fb950; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:12px 20px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:center; }
+  header h1 { font-size:18px; margin:0; }
+  #conn { color:var(--dim); }
+  main { display:grid; grid-template-columns: 320px 1fr; gap:16px; padding:16px 20px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; margin-bottom:16px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); margin:0 0 10px; }
+  button { font:inherit; color:var(--text); background:#21262d; border:1px solid var(--line); border-radius:6px; padding:6px 12px; cursor:pointer; }
+  button:hover:not(:disabled) { border-color:var(--dim); }
+  button:disabled { opacity:.45; cursor:default; }
+  button.primary { background:var(--accent); border-color:var(--accent); }
+  button.danger { background:var(--rec); border-color:var(--rec); }
+  input[type=text], input[type=number] { font:inherit; color:var(--text); background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:5px 8px; }
+  .badge { display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-top:1px solid var(--line); gap:8px; }
+  .badge:first-child { border-top:0; }
+  .badge small { color:var(--dim); display:block; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px; }
+  .labels { display:grid; grid-template-columns:repeat(6, 1fr); gap:8px; }
+  .labels button { padding:12px 6px; text-transform:capitalize; }
+  .labels button.sel { outline:2px solid var(--accent); }
+  .labels button span { display:block; font-size:12px; color:var(--dim); }
+  #guide { color:var(--dim); margin:10px 0 0; min-height:2.8em; }
+  #big { font-size:42px; font-weight:700; font-variant-numeric:tabular-nums; }
+  #bigsub { color:var(--dim); }
+  #big.fresh { color:#2ecc40; }
+  canvas { width:100%; height:260px; background:var(--bg); border-radius:6px; display:block; }
+  .legend { display:flex; gap:12px; font-size:12px; color:var(--dim); margin-top:6px; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
+  #pending table { border-collapse:collapse; margin-bottom:10px; }
+  #pending td { padding:2px 12px 2px 0; }
+  #log { color:var(--dim); font-size:13px; max-height:120px; overflow:auto; }
+  .err { color:var(--rec); }
+  .state { font-weight:600; }
+</style>
+</head>
+<body>
+<header><h1>Air-time recorder</h1><span id="conn">connecting to backend…</span></header>
+<main>
+  <div>
+    <section>
+      <h2>Badges</h2>
+      <div id="badges"><small style="color:var(--dim)">Scanning… start the airtime app on a badge.</small></div>
+    </section>
+    <section id="connected" hidden>
+      <h2>Connected badge</h2>
+      <div id="info" style="color:var(--dim);font-size:13px;word-break:break-all"></div>
+      <div class="row">
+        <button id="identify">Identify</button>
+        <button id="disconnect">Disconnect</button>
+      </div>
+      <div class="row">
+        <input id="newname" type="text" maxlength="16" placeholder="New name" style="flex:1">
+        <button id="rename">Rename</button>
+      </div>
+    </section>
+    <section>
+      <h2>Log</h2>
+      <div id="log"></div>
+    </section>
+  </div>
+  <div>
+    <section>
+      <h2>Action</h2>
+      <div class="labels" id="labels"></div>
+      <p id="guide"></p>
+      <div class="row">
+        <label>Takes <input id="takes" type="number" min="1" max="50" value="10" style="width:64px"></label>
+        <label>Seconds <input id="seconds" type="number" min="5" max="600" value="60" style="width:72px"></label>
+        <label><input id="plushy" type="checkbox" checked> In plushy</label>
+        <input id="notes" type="text" placeholder="Notes (surface, who, etc.)" style="flex:1">
+      </div>
+    </section>
+    <section>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:16px">
+        <div><div id="big">—</div><div id="bigsub">Connect a badge, pick an action, press Start.</div></div>
+        <div class="row" style="margin:0">
+          <button id="mark" title="Space">Mark take (Space)</button>
+          <button id="startstop" class="primary" disabled>Start</button>
+        </div>
+      </div>
+      <div style="margin-top:12px"><canvas id="plot"></canvas></div>
+      <div class="legend" id="legend"></div>
+    </section>
+    <section id="pending" hidden>
+      <h2>Review recording</h2>
+      <table id="summary"></table>
+      <div class="row"><button id="save" class="primary">Save</button><button id="discard">Discard</button></div>
+    </section>
+  </div>
+</main>
+<script>
+const GUIDE = {
+  throw: "Throw it up and catch it, 10 times. Hold it still in your hand for ~2 s between throws. The counter ticks on each detected flight.",
+  drop: "Throw it and don't catch it, 10 times. Let it land on the floor and leave it ~2 s, pick it up, hold still ~2 s, repeat.",
+  still: "Put the badge down and don't touch it. Try a few surfaces across sessions (table, floor, chair).",
+  walk: "Wear it on the lanyard (in the plushy if that's the stage setup) and walk normally.",
+  unknown: "Handle it without throwing or dropping: pick up, wave, shake, twist, pass between hands, put in a pocket.",
+  mixed: "Guided session: follow the prompt shown here and on the badge. PUT DOWN: leave it on a surface. HOLD: hold it and move naturally. THROW: toss it up and catch it; on some catches hold it as still as you can for 2 s. MISS: throw it, let it land on the floor and leave it. Takes = throws and drops each.",
+  landings: "Throws only, to learn catches vs misses. THROW: toss it up and catch it (vary it: soft, firm, some held very still afterwards). MISS: throw it and let it land on the floor; vary the height and surface, and include gentle landings where it barely bounces. Leave it until the next prompt appears, then pick it up and throw. Takes = catches and misses each.",
+};
+const GUIDED = new Set(["mixed", "landings"]);
+const TIMED = new Set(["still", "walk", "unknown"]);
+const STATE_COLOURS = ["#1e46c8", "#1e963c", "#e6c814", "#f07814", "#d21e1e", "#5a5a64"];
+const STATE_NAMES = ["Still", "Walk", "Flying", "Throw", "Drop", "Handling"];
+// A badge running a trained model only reports these (protocol state codes).
+const MODEL_STATES = [0, 3, 4];
+const WINDOW_MS = 10000;
+
+let promptStep = null, freshTimer, audio;
+// A distinct pitch per prompt, so repeats and changes can be heard.
+const TONES = {"PUT DOWN": 440, "HOLD": 587, "THROW": 880, "MISS": 330};
+function beep(prompt) {
+  if (!audio) return;
+  const osc = audio.createOscillator(), gain = audio.createGain(), t = audio.currentTime;
+  osc.frequency.value = TONES[prompt] || 660;
+  gain.gain.setValueAtTime(0.25, t);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+  osc.connect(gain).connect(audio.destination);
+  osc.start(t);
+  osc.stop(t + 0.25);
+}
+let ws, status = null, label = "throw", samples = [];
+const $ = id => document.getElementById(id);
+const send = msg => ws && ws.readyState === 1 && ws.send(JSON.stringify(msg));
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const log = (text, cls) => { const d = document.createElement("div"); d.textContent = new Date().toLocaleTimeString() + "  " + text; if (cls) d.className = cls; $("log").prepend(d); };
+
+$("legend").innerHTML = MODEL_STATES.map(i => `<span><i style="background:${STATE_COLOURS[i]}"></i>${STATE_NAMES[i]}</span>`).join("") + `<span>line = |a| (g)</span>`;
+
+function renderLabels() {
+  const counts = status ? status.counts : {};
+  $("labels").innerHTML = Object.keys(GUIDE).map(l =>
+    `<button data-l="${l}" class="${l === label ? "sel" : ""}">${l}<span>${counts[l] ?? 0} saved</span></button>`).join("");
+  $("guide").textContent = GUIDE[label];
+  $("takes").disabled = TIMED.has(label);
+  $("seconds").disabled = !TIMED.has(label);
+}
+$("labels").onclick = e => { const b = e.target.closest("button"); if (b && !(status && status.recording)) { label = b.dataset.l; renderLabels(); } };
+
+function renderBadges() {
+  if (!status.badges.length) return;
+  $("badges").innerHTML = status.badges.map(b => {
+    const isConn = status.connected === b.address;
+    const stale = !isConn && b.age > 5;
+    const where = isConn ? "connected" : stale ? `not seen ${Math.round(b.age)}s` : `<span class="state">${esc(b.state)}</span>`;
+    const action = isConn ? "<small>●</small>"
+      : `<button data-a="${esc(b.address)}" ${status.connected || status.connecting ? "disabled" : ""}>Connect</button>`;
+    return `<div class="badge"><div><b>${esc(b.name)}</b> <small>${esc(b.badge_id)} · ${b.rssi} dBm · ${where}</small></div>${action}</div>`;
+  }).join("");
+}
+$("badges").onclick = e => { const b = e.target.closest("button[data-a]"); if (b) { send({op: "connect", address: b.dataset.a}); log("connecting to " + b.dataset.a + "…"); } };
+
+function render() {
+  renderBadges();
+  renderLabels();
+  const conn = !!status.connected, rec = status.recording, p = status.pending;
+  $("connected").hidden = !conn;
+  $("info").textContent = status.info + (conn ? ` · lost packets ${status.lost}` : "");
+  $("startstop").disabled = !conn && !rec;
+  $("startstop").textContent = rec ? "Stop" : "Start";
+  $("startstop").className = rec ? "danger" : "primary";
+  $("mark").disabled = !rec;
+  if (!rec || !rec.prompt) promptStep = null;
+  if (rec) {
+    if (rec.prompt) {
+      $("big").textContent = rec.prompt;
+      if (rec.step !== promptStep) {
+        // Flash green at the start of each prompt so repeats are visible.
+        promptStep = rec.step;
+        $("big").classList.add("fresh");
+        beep(rec.prompt);
+        clearTimeout(freshTimer);
+        freshTimer = setTimeout(() => $("big").classList.remove("fresh"), 500);
+      }
+      $("bigsub").textContent = `Step ${Math.min(rec.step + 1, rec.steps)} / ${rec.steps} · ${rec.flights} flights · ${rec.missed} missed · ${rec.samples} samples`;
+      return renderPending(p);
+    }
+    if (TIMED.has(rec.label)) {
+      const target = +$("seconds").value;
+      $("big").textContent = `${rec.seconds.toFixed(0)} / ${target} s`;
+      if (rec.seconds >= target) send({op: "stop"});
+    } else {
+      $("big").textContent = `${rec.flights} / ${rec.takes} flights`;
+    }
+    $("bigsub").textContent = `Recording ${rec.label} · ${rec.samples} samples · ${rec.marks} marks`;
+  } else if (status.connecting) {
+    $("big").textContent = "…"; $("bigsub").textContent = "Connecting";
+  } else if (p) {
+    $("big").textContent = "Review";
+    $("bigsub").textContent = "Save or discard the recording below.";
+  } else {
+    $("big").textContent = conn ? "Ready" : "—";
+    $("bigsub").textContent = conn ? "Pick an action and press Start." : "Connect a badge, pick an action, press Start.";
+  }
+  renderPending(p);
+}
+
+function renderPending(p) {
+  $("pending").hidden = !p;
+  if (p) {
+    const target = GUIDED.has(p.label) ? 2 * p.takes : p.takes;
+    const rows = [["Action", p.label], ["Duration", p.duration_s + " s"], ["Samples", `${p.samples} @ ${p.rate_hz} Hz`],
+      ["Flights detected", p.flights + (TIMED.has(p.label) ? "" : ` (target ${target})`)], ["Marks", p.marks],
+      ...(GUIDED.has(p.label) ? [["Missed prompts", p.missed]] : []),
+      ["Lost packets", p.lost_packets], ["Ended", p.reason]];
+    $("summary").innerHTML = rows.map(([k, v]) => `<tr><td style="color:var(--dim)">${k}</td><td>${esc(v)}</td></tr>`).join("");
+  }
+}
+
+$("startstop").onclick = () => {
+  if (status.recording) return send({op: "stop"});
+  // Browsers only allow audio after a user gesture, so unlock it here.
+  audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+  audio.resume();
+  send({op: "start", label, takes: +$("takes").value, plushy: $("plushy").checked, notes: $("notes").value});
+  log(`recording ${label}`);
+};
+$("mark").onclick = () => send({op: "mark"});
+document.addEventListener("keydown", e => {
+  if (e.code === "Space" && e.target.tagName !== "INPUT") { e.preventDefault(); if (status && status.recording) send({op: "mark"}); }
+});
+$("save").onclick = () => send({op: "save"});
+$("discard").onclick = () => { send({op: "discard"}); log("discarded"); };
+$("identify").onclick = () => send({op: "identify"});
+$("disconnect").onclick = () => send({op: "disconnect"});
+$("rename").onclick = () => { const n = $("newname").value.trim(); if (n) { send({op: "rename", name: n}); log("renamed to " + n); $("newname").value = ""; } };
+
+function draw() {
+  const c = $("plot"), dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth, h = c.clientHeight;
+  if (c.width !== w * dpr) { c.width = w * dpr; c.height = h * dpr; }
+  const g = c.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  if (samples.length) {
+    const tEnd = samples[samples.length - 1][0], tStart = tEnd - WINDOW_MS;
+    const x = t => (t - tStart) / WINDOW_MS * w, y = v => h - Math.min(v, 4) / 4 * h;
+    g.globalAlpha = 0.35;
+    for (let i = 0; i < samples.length - 1; i++) {
+      const [t, , s] = samples[i];
+      g.fillStyle = STATE_COLOURS[s] || "#333";
+      g.fillRect(x(t), 0, Math.max(1, x(samples[i + 1][0]) - x(t)) + 0.5, h);
+    }
+    g.globalAlpha = 1;
+    g.strokeStyle = "#30363d"; g.fillStyle = "#8b949e"; g.font = "11px system-ui"; g.lineWidth = 1;
+    for (const v of [0.3, 1, 2, 3]) { g.beginPath(); g.moveTo(0, y(v)); g.lineTo(w, y(v)); g.stroke(); g.fillText(v + " g", 4, y(v) - 3); }
+    g.strokeStyle = "#e6edf3"; g.lineWidth = 1.5; g.beginPath();
+    samples.forEach(([t, m], i) => i ? g.lineTo(x(t), y(m)) : g.moveTo(x(t), y(m)));
+    g.stroke();
+  }
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => { $("conn").textContent = "backend connected"; };
+  ws.onclose = () => { $("conn").textContent = "backend disconnected, retrying…"; setTimeout(connect, 1000); };
+  ws.onmessage = e => {
+    const m = JSON.parse(e.data);
+    if (m.type === "status") {
+      const was = status && status.connected;
+      status = m; render();
+      if (was && !m.connected) log("badge disconnected", "err");
+      if (!was && m.connected) log("connected: " + m.info);
+    } else if (m.type === "samples") {
+      samples.push(...m.data);
+      const cut = samples[samples.length - 1][0] - WINDOW_MS - 500;
+      while (samples.length && samples[0][0] < cut) samples.shift();
+    } else if (m.type === "saved") {
+      log(m.path ? "saved " + m.path : "nothing to save");
+    } else if (m.type === "error") {
+      log(m.message, "err");
+    }
+  };
+}
+connect();
+renderLabels();
+</script>
+</body>
+</html>

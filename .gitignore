@@ -4,3 +4,4 @@ __pycache__/
 data/
 dist/
 .impeccable/
+leaderboard_state.*
