@@ -20,6 +20,18 @@ Set up the virtual environment from the repository root (see the root
 cd race
 ```
 
+To start both Race web servers and open their pages from the repository root:
+
+```powershell
+.\start-race.ps1
+```
+
+The launcher uses the root `.venv`, starts each server in a separate console
+window, and reuses an already-running Race server. Leave the consoles open;
+press Ctrl+C in each to stop it. The leaderboard is at `http://localhost:8766`
+and the recorder is at `http://localhost:8765`. For these two servers alone,
+the required packages are `aiohttp` and `bleak`.
+
 ## Record
 
 Start a BLE build of a badge app that streams IMU data (Race itself is
