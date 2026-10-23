@@ -33,8 +33,9 @@ still, lift it up and down), in the intended physical configuration
 (including the plushy, if that is how the badge will be used). Press **Stop**
 when you're done.
 
-For a hands-off run, pick **Walk**, **Throw** or **Drop** instead. The recorder speaks timed prompts ("Start walking", "Stop. Lift it up
-and down", "Throw it"), shows them on screen and on the badge, and tags each
+For a hands-off run, pick **Walk**, **Throw** or **Drop** instead. The recorder
+speaks timed prompts ("Start walking", "Stop. Fidget with it", "Throw it"),
+shows them on screen and on the badge, and tags each
 stretch from the prompt that was showing. It skips the first second after each
 prompt while you react. The session saves itself when the run finishes;
 **Cancel** throws it away.
