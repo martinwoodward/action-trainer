@@ -29,17 +29,29 @@ plushy: `badge/apps/airtime/` (Airtime without an exit) and `badge/main.py`
   A guided `landings` session is the same but only THROW/MISS, to
   collect catch-versus-miss landings.
 - `listen.py`: console listener for badge advertisements.
-- `dashboard.py` with `web/dashboard.html`: a passive-scan, multi-badge page at
-  http://localhost:8766. It shows air time (time in `throw`) since the last
-  reset, with a scrolling chart of each badge's cumulative air time.
-  The badge counts the ms per state and advertises them in its scan response
-  (service data `0xA17E`). `dashboard_state.json` holds the page-reset
-  baselines (cleared when the badge reboots), the known badges and an hour of
-  chart history. The scan restarts when a badge goes quiet, because a
-  long-running macOS scan can stop reporting a badge that comes back.
-- `protocol.py`: the advertisement and GATT format. It mirrors
+- `dashboard.py` with `web/dashboard.html`: a multi-badge page at
+  http://localhost:8766. Badges send UDP status datagrams over Wi-Fi to port
+  47217. The page shows air time (time in `throw`) since the last reset, with
+  a scrolling chart of each badge's cumulative air time. The badge counts the
+  ms per state and sends the totals in each status. The server acks badges
+  (so they switch from broadcast to unicast) and sends commands: rename,
+  identify and ping. `dashboard_state.json` holds the page-reset baselines
+  (cleared when the badge reboots), the known badges and an hour of chart
+  history. `tools/udp_latency.py` measures packet gaps and ping round trips.
+- The airtime app in this repo has **no BLE**: it talks Wi-Fi/UDP only, so
+  `recorder.py` and `listen.py` need a BLE build for recording. Its Wi-Fi
+  settings live in `/state/airtime_net.json` (`ssid`, `password`, `server`),
+  written by `tools/deploy_badge.py --wifi-ssid/--wifi-password/--server`
+  (or `AIRTIME_WIFI_*` env vars); it falls back to `WIFI_*` in
+  `/system/secrets.py`. Never commit Wi-Fi credentials.
+- The airtime screen mirrors the badge's dashboard card: keep `PALETTE` and
+  the namesake → colour/picture table identical in
+  `badge/apps/airtime/__init__.py` and `web/dashboard.html`. Pictures are
+  24×24 PNGs in `badge/apps/airtime/assets/`; the deploy tool copies them.
+- `protocol.py`: the advertisement, GATT and UDP formats. It mirrors
   `badge/apps/airtime/protocol.py` in `badger/home`, so keep UUIDs, struct
-  formats and field order identical on both sides.
+  formats and field order identical on both sides. The deploy tool copies it
+  to the badge.
 - `features.py` and `train.py`: 1 s windows with a 250 ms hop, a
   `DecisionTreeClassifier` (max depth 6), grouped cross-validation by session,
   and export to `dist/model.py` plus `dist/report.json`.

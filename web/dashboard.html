@@ -67,8 +67,9 @@
   .air b { display:block; font:500 1.9rem/1.1 var(--mono); letter-spacing:-0.025em; font-variant-numeric:tabular-nums; color:var(--foreground); }
   .air small { display:block; margin-top:.3rem; font:.65rem/1 var(--mono); text-transform:uppercase; letter-spacing:.16em; color:var(--muted-foreground); }
   .flying { font:500 10px/1 var(--mono); text-transform:uppercase; letter-spacing:.18em; padding:3px 7px; border-radius:4px; border:1px solid var(--c); color:#fff; background:var(--c); }
-  .bottom { display:flex; justify-content:space-between; align-items:center; gap:8px; }
-  .bottom button { height:2rem; padding:0 .8rem; font-size:.65rem; }
+  .bottom { display:flex; flex-direction:column; align-items:flex-start; gap:.6rem; }
+  .bottom button { height:2rem; padding:0 .6rem; font-size:.65rem; }
+  .actions { display:flex; gap:.35rem; flex:none; }
   #empty { color:var(--muted-foreground); font-size:.9rem; margin:0 0 1rem; }
 </style>
 </head>
@@ -84,23 +85,23 @@
       <option value="3600">1 h</option>
     </select>
   </label>
-  <button id="sound" title="Play each plushie's sound when it is thrown">Sound off</button>
+  <button id="sound" title="Play each plushie's sound while it is in the air">Sound off</button>
   <button id="resetall" class="danger">Reset all</button>
 </header>
 <main>
   <div id="chartwrap" class="surface"><canvas id="chart"></canvas></div>
   <div class="dots"></div>
-  <p id="empty">Looking for badges… They need the Airtime app and must not be connected to the recorder.</p>
+  <p id="empty">Looking for badges… They need the Wi-Fi Airtime app on the same network as this computer.</p>
   <div id="grid"></div>
 </main>
 <script>
 const PALETTE = ["#08872B", "#0969da", "#bc4c00", "#8250df", "#bf3989", "#cf222e", "#1b7c83", "#9a6700", "#5A615C", "#3192aa"];
 const KEEP_S = 3600;
-const GAP_MS = 20000;    // matches the server's OFFLINE_S
+const GAP_MS = 5000;     // matches the server's OFFLINE_S
 const LIVE_MAX_MS = 3000; // longest a flight is extended past the last report
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
-const colours = {};      // badge_id -> colour, stable for the session
+const nameOf = {};       // badge_id -> last known name
 const history = {};      // badge_id -> [[time_ms, air_ms], ...]
 let badges = [], ws, clearedMs = 0;
 
@@ -110,13 +111,15 @@ const RUBBER_DUCK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"
 // GitHub Copilot mark: Primer Octicons copilot-24 (MIT, github.com/primer/octicons).
 const COPILOT = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="#101411"><path d="M23.922 16.992c-.861 1.495-5.859 5.023-11.922 5.023-6.063 0-11.061-3.528-11.922-5.023A.641.641 0 0 1 0 16.736v-2.869a.841.841 0 0 1 .053-.22c.372-.935 1.347-2.292 2.605-2.656.167-.429.414-1.055.644-1.517a10.195 10.195 0 0 1-.052-1.086c0-1.331.282-2.499 1.132-3.368.397-.406.89-.717 1.474-.952 1.399-1.136 3.392-2.093 6.122-2.093 2.731 0 4.767.957 6.166 2.093.584.235 1.077.546 1.474.952.85.869 1.132 2.037 1.132 3.368 0 .368-.014.733-.052 1.086.23.462.477 1.088.644 1.517 1.258.364 2.233 1.721 2.605 2.656a.832.832 0 0 1 .053.22v2.869a.641.641 0 0 1-.078.256ZM12.172 11h-.344a4.323 4.323 0 0 1-.355.508C10.703 12.455 9.555 13 7.965 13c-1.725 0-2.989-.359-3.782-1.259a2.005 2.005 0 0 1-.085-.104L4 11.741v6.585c1.435.779 4.514 2.179 8 2.179 3.486 0 6.565-1.4 8-2.179v-6.585l-.098-.104s-.033.045-.085.104c-.793.9-2.057 1.259-3.782 1.259-1.59 0-2.738-.545-3.508-1.492a4.323 4.323 0 0 1-.355-.508h-.016.016Zm.641-2.935c.136 1.057.403 1.913.878 2.497.442.544 1.134.938 2.344.938 1.573 0 2.292-.337 2.657-.751.384-.435.558-1.15.558-2.361 0-1.14-.243-1.847-.705-2.319-.477-.488-1.319-.862-2.824-1.025-1.487-.161-2.192.138-2.533.529-.269.307-.437.808-.438 1.578v.021c0 .265.021.562.063.893Zm-1.626 0c.042-.331.063-.628.063-.894v-.02c-.001-.77-.169-1.271-.438-1.578-.341-.391-1.046-.69-2.533-.529-1.505.163-2.347.537-2.824 1.025-.462.472-.705 1.179-.705 2.319 0 1.211.175 1.926.558 2.361.365.414 1.084.751 2.657.751 1.21 0 1.902-.394 2.344-.938.475-.584.742-1.44.878-2.497Z"/><path d="M14.5 14.25a1 1 0 0 1 1 1v2a1 1 0 0 1-2 0v-2a1 1 0 0 1 1-1Zm-5 0a1 1 0 0 1 1 1v2a1 1 0 0 1-2 0v-2a1 1 0 0 1 1-1Z"/></svg>`;
 const image = svg => { const i = new Image(); i.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg); return i; };
+// Squirrel: Twemoji 1f43f (CC-BY 4.0, github.com/jdecked/twemoji); also the badge's assets/squirrel.png.
+const SQUIRREL = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><path fill="#AD743D" d="M35.432 22.773c-.195.858-.638 1.773-1.022 2.159 1.399-4.418 1.399-9.111-2.25-11.167.112 1.107-.11 1.691-.265 2.153-.21-2.219-.578-3.744-2.158-4.927-1.82-1.363-2.611-.452-.736 3.765 2.2 4.945 1.475 8.603.827 11.216-.038.154-.08.29-.12.439.804-5.765-.989-11.722-6.825-14.915-2.989-1.636-5.211-1.852-5.329-3.037-.135-1.377-1.218-3.698-3.811-5.327.444-1.309-.485-2.787-1.117-2.841-.631-.054-2.024 1.039-2.16 2.528-4.694 1.399-9.492 7.219-9.345 8.397.148 1.177.341 2.638 6.57 3.656 1.104.18 3.995 1.835 4.4 5.779.456 4.44 2.276 8.054 4.712 11.216h-1.73c-4.132 0-4.132 4.132-1.377 4.132h10.928l-.002-.002c.36-.003.788-.029 1.304-.085 6.931-.612 10.792-7.349 9.506-13.139z"/><path fill="#D99E82" d="M11.325 15.279c3.258-.09 4.524-6.049-.682-6.82-.122-1.077-.763-2.614-2.257-2.724-2.348-.173-5.294 2.116-6.099 7.478.881.601 2.467 1.18 5.405 1.661 1.104.18 3.995 1.835 4.4 5.779.531 5.174 2.914 9.224 5.966 12.747.903-.94 1.636-2.325 2.028-4.285 1.378-6.886-7.384-12.458-8.761-13.836z"/><circle fill="#292F33" cx="7.692" cy="9.459" r="1.377"/><path fill="#662113" d="M21.254 13.564c4.065 3.341 6.158 7.296 5.402 12.37-.318 2.143.83 2.933 1.688.902.599-1.423.936-9.887-6.05-14.311-1.859-1.177-1.961.284-1.04 1.039z"/><path fill="#AD743D" d="M13.234 19.676c-1.243-1.243-4.97 0-6.211-2.488-.786-1.572-3.728 1.245-2.485 3.734 1.242 2.483 4.969 2.483 7.454 1.242 2.485-1.242 1.242-2.488 1.242-2.488z"/><path fill="#662113" d="M6.26 20.146c.304 1.49-.383 4.295-1.874 4.6-1.49.304-3.22-2.007-3.524-3.496-.304-1.49.658-2.947 2.147-3.253 1.492-.305 2.946.659 3.251 2.149z"/><path fill="#AD743D" d="M13.907 21.375c-1.635-1.062-5.388 1.148-7.309-1.259-1.215-1.523-3.753 2.209-1.832 4.615 1.921 2.405 5.962 1.543 8.368-.378 2.407-1.92.773-2.978.773-2.978z"/></svg>`;
 // GitHub Octocat (Mona): Primer Octicons mark-github-24 (MIT, github.com/primer/octicons).
 const OCTOCAT = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="#101411"><path d="M10.226 17.284c-2.965-.36-5.054-2.493-5.054-5.256 0-1.123.404-2.336 1.078-3.144-.292-.741-.247-2.314.09-2.965.898-.112 2.111.36 2.83 1.01.853-.269 1.752-.404 2.853-.404 1.1 0 1.999.135 2.807.382.696-.629 1.932-1.1 2.83-.988.315.606.36 2.179.067 2.942.72.854 1.101 2 1.101 3.167 0 2.763-2.089 4.852-5.098 5.234.763.494 1.28 1.572 1.28 2.807v2.336c0 .674.561 1.056 1.235.786 4.066-1.55 7.255-5.615 7.255-10.646C23.5 6.188 18.334 1 11.978 1 5.62 1 .5 6.188.5 12.545c0 4.986 3.167 9.12 7.435 10.669.606.225 1.19-.18 1.19-.786V20.63a2.9 2.9 0 0 1-1.078.224c-1.483 0-2.359-.808-2.987-2.313-.247-.607-.517-.966-1.034-1.033-.27-.023-.359-.135-.359-.27 0-.27.45-.471.898-.471.652 0 1.213.404 1.797 1.235.45.651.921.943 1.483.943.561 0 .92-.202 1.437-.719.382-.381.674-.718.944-.943"/></svg>`;
 
 const NAMESAKES = [
   ["copilot", {img: image(COPILOT)}],
   ["mona", {img: image(OCTOCAT)}], ["octocat", {img: image(OCTOCAT)}],
-  ["duck", {img: image(RUBBER_DUCK)}], ["squirrel", "🐿️"], ["bear", "🐻"], ["bunny", "🐰"], ["rabbit", "🐰"],
+  ["duck", {img: image(RUBBER_DUCK)}], ["squirrel", {img: image(SQUIRREL)}], ["bear", "🐻"], ["bunny", "🐰"], ["rabbit", "🐰"],
   ["octo", "🐙"], ["cat", "🐱"], ["dog", "🐶"], ["fox", "🦊"], ["owl", "🦉"], ["frog", "🐸"],
   ["penguin", "🐧"], ["panda", "🐼"], ["unicorn", "🦄"], ["dino", "🦖"], ["monkey", "🐵"],
   ["pig", "🐷"], ["chick", "🐥"], ["whale", "🐳"], ["turtle", "🐢"], ["hedgehog", "🦔"],
@@ -132,7 +135,13 @@ const SANS = css.getPropertyValue("--sans"), MONO = css.getPropertyValue("--mono
 const INK = {text: "#101411", muted: css.getPropertyValue("--muted-foreground"), grid: "rgba(16, 20, 17, 0.09)"};
 $("logo").src = image(OCTOCAT.replace('fill="#101411"', 'fill="#5FED83"')).src;
 const EMOJI_FONT = '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
-const colour = id => colours[id] || (colours[id] = PALETTE[Object.keys(colours).length % PALETTE.length]);
+// Each badge keeps one colour everywhere, matching its own screen
+// (PALETTE and SWATCH mirror badge/apps/airtime/__init__.py).
+const SWATCH = [["copilot", 1], ["mona", 3], ["octocat", 3], ["duck", 2], ["squirrel", 4]];
+const colour = id => {
+  const hit = SWATCH.find(([k]) => String(nameOf[id] || "").toLowerCase().includes(k));
+  return PALETTE[hit ? hit[1] : parseInt(id, 16) % PALETTE.length];
+};
 
 function fmt(ms) {
   const s = ms / 1000;
@@ -170,12 +179,12 @@ function card(b) {
       <span class="meta">${b.badge_id}</span></div>
     <div class="air"><b data-air="${b.badge_id}">${air}</b><small>air time</small></div>
     <div class="bottom"><span class="meta">${since} · ${seen}</span>
-      <button data-id="${b.badge_id}" ${b.totals ? "" : "disabled"}>Reset</button></div>
+      <span class="actions"><button data-identify="${b.badge_id}" title="Flash the badge's screen" ${b.online ? "" : "disabled"}>Find</button><button data-rename="${b.badge_id}" title="Rename the badge" ${b.online ? "" : "disabled"}>Rename</button><button data-id="${b.badge_id}" ${b.totals ? "" : "disabled"}>Reset</button></span></div>
   </div>`;
 }
 
-// Sounds of delight, played by this computer when a plushie takes off. Each is
-// synthesised with Web Audio, so there are no files to serve.
+// Sounds of delight, played by this computer while a plushie is in the air.
+// Each is synthesised with Web Audio, so there are no files to serve.
 let audio, master;
 let soundOn = localStorage.getItem("airtime-sound") === "on";
 function ctx() {
@@ -189,7 +198,7 @@ function ctx() {
   return audio;
 }
 // One note: a pitch sweep through (time, Hz) points with a quick attack and decay.
-function note(t, dur, freqs, {type = "sine", vol = 0.3, filter} = {}) {
+function note(t, dur, freqs, {type = "sine", vol = 0.3, filter, out: dest = master} = {}) {
   const a = ctx(), o = a.createOscillator(), g = a.createGain();
   o.type = type;
   freqs.forEach(([dt, f], i) => i ? o.frequency.exponentialRampToValueAtTime(f, t + dt) : o.frequency.setValueAtTime(f, t + dt));
@@ -198,56 +207,93 @@ function note(t, dur, freqs, {type = "sine", vol = 0.3, filter} = {}) {
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   let out = o;
   if (filter) { const f = a.createBiquadFilter(); f.type = "bandpass"; f.frequency.value = filter; f.Q.value = 2; o.connect(f); out = f; }
-  out.connect(g); g.connect(master);
+  out.connect(g); g.connect(dest);
   o.start(t); o.stop(t + dur + 0.02);
 }
+// [name key, play(t, out), seconds between repeats while the plushie flies]
+const duck = (t, out) => [0, 0.17].forEach((d, i) => note(t + d, 0.15, [[0, 950 + i * 120], [0.05, 1500 + i * 150], [0.15, 1050]], {type: "sawtooth", vol: 0.22, filter: 1400, out}));
+const mona = (t, out) => [[0, 260, 620], [0.11, 340, 820], [0.22, 450, 1150], [0.36, 520, 1500]].forEach(([d, f0, f1]) => note(t + d, 0.12, [[0, f0], [0.1, f1]], {vol: 0.3, out}));
 const SOUNDS = [
   // A rubber duck squeezed twice: squee-squee!
-  ["duck", t => [0, 0.17].forEach((d, i) => note(t + d, 0.15, [[0, 950 + i * 120], [0.05, 1500 + i * 150], [0.15, 1050]], {type: "sawtooth", vol: 0.22, filter: 1400}))],
+  ["duck", duck, 0.42],
   // A happy squirrel chitter: quick falling chirps.
-  ["squirrel", t => [0, 0.055, 0.11, 0.165, 0.22, 0.3].forEach((d, i) => note(t + d, 0.045, [[0, 3400 - i * 120], [0.045, 2300]], {vol: 0.22}))],
+  ["squirrel", (t, out) => [0, 0.055, 0.11, 0.165, 0.22, 0.3].forEach((d, i) => note(t + d, 0.045, [[0, 3400 - i * 120], [0.045, 2300]], {vol: 0.22, out})), 0.4],
   // Copilot: a sparkly rising arpeggio with a shimmer on top.
-  ["copilot", t => { [523, 659, 784, 1047, 1319].forEach((f, i) => note(t + i * 0.06, 0.35, [[0, f]], {type: "triangle", vol: 0.25}));
-    note(t + 0.3, 0.5, [[0, 2093], [0.5, 2637]], {vol: 0.08}); }],
+  ["copilot", (t, out) => { [523, 659, 784, 1047, 1319].forEach((f, i) => note(t + i * 0.06, 0.35, [[0, f]], {type: "triangle", vol: 0.25, out}));
+    note(t + 0.3, 0.5, [[0, 2093], [0.5, 2637]], {vol: 0.08, out}); }, 0.6],
   // Mona the Octocat: bubbly bloops rising out of the deep.
-  ["mona", t => [[0, 260, 620], [0.11, 340, 820], [0.22, 450, 1150], [0.36, 520, 1500]].forEach(([d, f0, f1]) => note(t + d, 0.12, [[0, f0], [0.1, f1]], {vol: 0.3}))],
-  ["octocat", t => SOUNDS[3][1](t)],
+  ["mona", mona, 0.52],
+  ["octocat", mona, 0.52],
 ];
 // Anyone else gets a "wheee!" slide, pitched by their id so badges differ.
-function wheee(t, id) {
+function wheee(t, id, out = master) {
   const base = 380 + (parseInt(id, 16) % 7) * 45;
-  note(t, 0.5, [[0, base], [0.35, base * 3], [0.5, base * 2.6]], {type: "triangle", vol: 0.25});
+  note(t, 0.5, [[0, base], [0.35, base * 3], [0.5, base * 2.6]], {type: "triangle", vol: 0.25, out});
+}
+function soundOf(b) {
+  const key = String(b.name).toLowerCase(), s = SOUNDS.find(([k]) => key.includes(k));
+  return s ? {play: s[1], period: s[2]} : {play: (t, out) => wheee(t, b.badge_id, out), period: 0.55};
 }
 function delight(b) {
   if (!audio && !soundOn) return;
-  const t = ctx().currentTime + 0.02, key = String(b.name).toLowerCase();
-  const s = SOUNDS.find(([k]) => key.includes(k));
-  s ? s[1](t) : wheee(t, b.badge_id);
+  soundOf(b).play(ctx().currentTime + 0.02, master);
 }
+// A flying plushie's sound repeats until it lands. Each badge plays through its
+// own gain bus, so plushies in the air together overlap, and a landing fades
+// out only that badge.
+const LOOP_AHEAD_S = 0.15, LOOP_STALE_MS = 3000;  // same live cap as the chart
+const loops = {};        // badge_id -> {bus, sound, next, seen}
+function startLoop(b) {
+  const l = loops[b.badge_id];
+  if (l) { l.seen = Date.now(); return; }
+  const a = ctx(), bus = a.createGain();
+  bus.connect(master);
+  loops[b.badge_id] = {bus, sound: soundOf(b), next: a.currentTime + 0.02, seen: Date.now()};
+  pumpLoops();
+}
+function stopLoop(id) {
+  const l = loops[id];
+  if (!l) return;
+  delete loops[id];
+  l.bus.gain.setTargetAtTime(0, audio.currentTime, 0.06);
+  setTimeout(() => l.bus.disconnect(), 800);
+}
+function pumpLoops() {
+  if (!audio) return;
+  for (const [id, l] of Object.entries(loops)) {
+    if (!soundOn || Date.now() - l.seen > LOOP_STALE_MS) { stopLoop(id); continue; }
+    for (; l.next < audio.currentTime + LOOP_AHEAD_S; l.next += l.sound.period) {
+      l.sound.play(Math.max(l.next, audio.currentTime + 0.01), l.bus);
+    }
+  }
+}
+setInterval(pumpLoops, 50);
 function showSound() {
   const live = soundOn && audio && audio.state === "running";
   $("sound").textContent = !soundOn ? "Sound off" : live ? "Sound on" : "Click for sound";
 }
 
-// A take-off is the badge entering the throw state. macOS can miss the short
-// throw advert, so a rise in air time while not flying counts as one too.
+// A badge in the throw state loops its sound. A lost datagram can hide a short
+// flight, so a rise in air time while not flying plays the sound once.
 const flight = {};       // badge_id -> {flying, air, at}
 function listen(status) {
   for (const b of status.badges) {
     const was = flight[b.badge_id], air = b.totals ? b.totals.throw : 0;
     const flying = b.online && b.state === "throw";
     const now = Date.now();
-    if (was && b.online && (flying && !was.flying || !flying && !was.flying && air > was.air) && now - was.at > 2500) {
+    if (was && soundOn && flying) startLoop(b);
+    else stopLoop(b.badge_id);
+    if (was && b.online && !flying && !was.flying && air > was.air && now - was.at > 2500) {
       if (soundOn) delight(b);
       flight[b.badge_id] = {flying, air, at: now};
-    } else flight[b.badge_id] = {flying, air, at: was ? was.at : 0};
+    } else flight[b.badge_id] = {flying, air, at: flying ? now : was ? was.at : 0};
   }
 }
 
 function render(status) {
   listen(status);
   badges = status.badges;
-  badges.forEach(b => colour(b.badge_id));
+  badges.forEach(b => { nameOf[b.badge_id] = b.name; });
   $("grid").innerHTML = badges.map(card).join("");
   $("empty").hidden = badges.length > 0;
   const online = badges.filter(b => b.online).length;
@@ -366,6 +412,14 @@ const send = msg => ws && ws.readyState === 1 && ws.send(JSON.stringify(msg));
 $("grid").onclick = e => {
   const b = e.target.closest("button[data-id]");
   if (b) send({op: "reset", badge_id: b.dataset.id});
+  const f = e.target.closest("button[data-identify]");
+  if (f) send({op: "identify", badge_id: f.dataset.identify});
+  const r = e.target.closest("button[data-rename]");
+  if (r) {
+    const old = (badges.find(x => x.badge_id === r.dataset.rename) || {}).name || "";
+    const name = (prompt("New name for " + old + " (up to 16 characters)", old) || "").trim().slice(0, 16);
+    if (name && name !== old) send({op: "rename", badge_id: r.dataset.rename, name});
+  }
   const p = e.target.closest("[data-sound]");
   if (p) { const badge = badges.find(x => x.badge_id === p.dataset.sound); ctx(); if (badge) delight(badge); showSound(); }
 };

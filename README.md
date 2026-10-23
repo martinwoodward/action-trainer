@@ -114,9 +114,9 @@ For a badge inside a plushy, this repository carries its own copy of the
 Airtime app (`badge/apps/airtime/`) and a kiosk boot script (`badge/main.py`).
 With the kiosk installed, every boot goes straight into Airtime, including a
 bump of the reset switch: there is no startup animation and no menu. The app
-has no exit; if it ever returns, the badge reboots into it. The recorder
-reconnects over Bluetooth by itself once the badge advertises again. A
-recording that is cut off by a reboot is still kept as a pending recording.
+has no exit; if it ever returns, the badge reboots into it. Airtime reports
+to the dashboard over Wi-Fi and has no Bluetooth, so the recorder can't
+record from it; use a BLE build of the app for recording sessions.
 
 Deploy over USB serial (the port is auto-detected; close other serial users
 first):
@@ -126,6 +126,20 @@ python tools/deploy_badge.py kiosk    # app + dist/model.py, and /system/main.py
 python tools/deploy_badge.py app      # update the app/model in /state only
 python tools/deploy_badge.py restore  # stock boot (badge/main.orig.py)
 ```
+
+`app` and `kiosk` also take the Wi-Fi settings, which are stored on the badge
+in `/state/airtime_net.json`:
+
+```powershell
+$env:AIRTIME_WIFI_SSID = "..."; $env:AIRTIME_WIFI_PASSWORD = "..."
+python tools/deploy_badge.py kiosk --server auto
+```
+
+`--wifi-ssid` and `--wifi-password` work too but land in your shell history.
+`--server auto` uses this computer's current IP; `--server none` makes the
+badge broadcast until the dashboard answers. Without stored credentials, the
+badge uses `WIFI_SSID` and `WIFI_PASSWORD` from `/system/secrets.py`. The tool
+never prints the password; don't commit it.
 
 `kiosk` and `restore` write `/system` by remounting its FAT read-write over
 serial for the duration of the command. `main.py` boots
@@ -139,18 +153,35 @@ Ways back in:
 
 ## State-time dashboard
 
-`dashboard.py` follows any number of badges by passive Bluetooth scanning. It
-shows each badge's **air time** (time in the `throw` state) since it was reset,
+`dashboard.py` follows any number of badges over Wi-Fi: each badge sends a
+UDP status datagram to port 47217 every 250 ms, and at once when its state
+changes. It shows each badge's **air time** (time in the `throw` state) since it was reset,
 and graphs every badge's cumulative air time on a chart that scrolls with the
 clock. You can choose a 1 min, 5 min, 15 min or 1 h window. A badge named
 after an animal or a mascot (for example Duckie, Squirrel or Copilot) shows
 that picture at the leading end of its line, and next to its name on its card.
 Duckie is drawn as a yellow rubber duck; Copilot and Mona use the Copilot and
-Octocat marks from Primer Octicons (MIT); the other animals use emoji.
+Octocat marks from Primer Octicons (MIT); Squirrel is the Twemoji squirrel
+(CC-BY 4.0, [jdecked/twemoji](https://github.com/jdecked/twemoji)); the other
+animals use emoji. Each badge keeps one colour on the page: Copilot blue,
+Duckie orange, Mona purple, Squirrel pink, and for any other badge a colour
+picked from its id.
+
+The badge's own screen matches its card: a white card with the same colour
+swatch, picture (24×24 PNGs in `badge/apps/airtime/assets/`, copied by
+`tools/deploy_badge.py`), name and air time, an **IN THE AIR** pill in the
+badge's colour while it flies, **DROPPED** in red, its battery level at the
+top right (`badge.battery_level()`, read every 2 s; `+` while charging, red at
+20% or below), and its throw/drop counts and Wi-Fi address at the bottom.
+Names too long to fit are shortened with `..`. Find blinks the screen in the badge's colour.
+Badges named after other animals show no picture on the badge. Keep `PALETTE`
+and the namesake colours in step in `web/dashboard.html` and the app.
 Turn on **Sound** in the header and the dashboard's computer plays a sound of
-delight each time a plushie takes off: a rubber-duck squeak for Duckie, a
+delight for as long as a plushie is in the air: a rubber-duck squeak for Duckie, a
 chitter for Squirrel, a sparkly arpeggio for Copilot, bubble bloops for Mona,
-and a "wheee" for anyone else. Click a badge's picture on its card to hear its
+and a "wheee" for anyone else. Each sound repeats until its plushie lands, and
+plushies in the air together are heard together. A flight too short to be
+reported still plays its sound once. Click a badge's picture on its card to hear its
 sound. The sounds are synthesised in the page with Web Audio; browsers only
 allow sound after a click on the page.
 
@@ -167,35 +198,46 @@ python dashboard.py              # http://localhost:8766
 ```
 
 - **Counting is done on the badge.** The Airtime app in this repository adds up
-  milliseconds per state while it runs and advertises the totals. The totals
-  stay exact while the laptop is out of range.
+  milliseconds per state while it runs and sends the totals in every status.
+  The totals stay exact while the laptop is unreachable.
+- **Network:** the badges and this computer must be on the same 2.4 GHz
+  network, and it must allow client-to-client traffic. Many venue and guest
+  networks isolate clients; then nothing arrives, and a phone hotspot or a
+  travel router is the fix. A badge sends to its configured server, otherwise
+  broadcasts, and switches to unicast once the dashboard acks it. On macOS,
+  allow incoming connections for Python if the firewall asks.
+- **Rename and Find:** each card has **Rename**, which saves the new name on
+  the badge, and **Find**, which flashes the badge's screen. Both are enabled
+  while the badge is online.
 - **Resets:** a badge reboot zeroes its counters. **Reset** on the page (per
   badge or **Reset all**) stores a baseline in `dashboard_state.json`, and the
   times shown are counted from that baseline. A restart of the dashboard keeps
   the baselines. The next reboot of that badge clears its baseline. **Reset
   all** also clears the chart history, on the server and in every open page.
-- **Out of range:** a badge that goes quiet greys out after 20 s, but the
-  dashboard never stops looking for it. A long-running macOS scan can miss a
-  badge that comes back, so the scan restarts when a badge has been quiet for
-  8 s, and every 60 s regardless. When the badge returns, its line continues
-  from where it left off. Because the badge kept counting, the jump across the
-  gap is drawn as a dashed straight line.
-- **Latency:** macOS listens for adverts only in short windows, so how often
-  it hears a badge depends mostly on how often the badge advertises. The
-  badge advertises every 20 ms, rebuilds the advert every 250 ms, and
-  re-advertises at once when its state changes. The server pushes each
-  advert to the page as it arrives. A badge then updates on the page about
-  every 0.3 s (p90 under 1 s), against about 2 s and up to 12 s with the old
-  250 ms interval. While a badge is in the air, the page extends its line and
-  air time live, for up to 3 s past the last report. To measure the gaps and
-  the take-off lag, run `python tools/adv_latency.py --seconds 60`.
-- A badge on an older Airtime build still appears, with its state, but shows
-  no totals. A badge connected to the recorder may stop advertising, so the
-  dashboard shows it as offline until that connection ends.
+- **Out of range:** a badge that goes quiet greys out after 5 s. When it
+  returns, its line continues from where it left off. Because the badge kept
+  counting, the jump across the gap is drawn as a dashed straight line.
+- **Latency:** the server pushes each status to the page as it arrives.
+  Measured with Copilot on venue Wi-Fi: a status every 250 ms (p50 255 ms,
+  p90 360–470 ms), 5–15% of datagrams lost on a busy 2.4 GHz channel, and a
+  ping round trip of 35–55 ms p50 (p90 80–120 ms). A state change is sent at
+  once and repeated 60 ms later, so a take-off usually reaches the page in
+  well under 100 ms; in a 20 s test, all 20 state changes arrived. A badge
+  is back online about 7 s after a reset. While
+  a badge is in the air, the page extends its line and air time live, for up
+  to 3 s past the last report. To measure packet gaps, loss and ping round
+  trips, stop the dashboard and run `python tools/udp_latency.py --seconds 60`.
+  The old Bluetooth builds updated about every 0.3–0.5 s (p50), with gaps up to
+  4.5 s; `tools/adv_latency.py` still measures those.
 
-## BLE protocol
+## Protocol
 
-`protocol.py` mirrors the advertisement and GATT packet contract implemented
+The Wi-Fi status, ack, command and reply datagrams are the UDP section of
+`protocol.py`: a `<2sBBI` header (magic `AT`, version 2, type, badge id),
+then a fixed status body and the name (up to 16 bytes). Commands are `N`
+(name), `I` (identify) and `P` (ping, echoed back).
+
+The BLE part of `protocol.py` mirrors the advertisement and GATT packet contract implemented
 by `badge/apps/airtime/protocol.py` in `badger/home`. Keep the UUIDs, packet
 field order, and struct formats synchronized; `tests/test_stream.py` checks
 the recording packet format.

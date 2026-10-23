@@ -1,4 +1,7 @@
-"""Air-time advertising payload, shared by the badge and the laptop tools.
+"""Air-time wire formats, shared by the badge and the laptop tools.
+
+The Airtime app reports to the dashboard over Wi-Fi (UDP, see the end of this
+file). The BLE formats below remain for the recorder and for older builds.
 
 Legacy advertising leaves 31 bytes; flags (3) + manufacturer AD header (2)
 + this 26-byte body fills it exactly. The badge name goes in the scan
@@ -142,3 +145,105 @@ def unpack_mfg(data):
     if values[0] != COMPANY_ID or values[1] != MAGIC:
         return None
     return dict(zip(FIELDS, values))
+
+
+# --- Wi-Fi (UDP) ------------------------------------------------------------
+# The Airtime badge app sends a status datagram to the dashboard on every state
+# change and as a heartbeat. The dashboard answers with acks (so a badge that
+# broadcasts learns the server's address) and commands. Every datagram starts
+# with MAGIC, UDP_VERSION and a one-byte type.
+UDP_PORT = 47217
+UDP_VERSION = 2
+UDP_HEADER = "<2sBBI"  # magic, version, type, badge_id
+UDP_HEADER_SIZE = struct.calcsize(UDP_HEADER)
+PKT_STATUS = 0x53  # "S" badge -> server
+PKT_ACK = 0x41  # "A" server -> badge: "I heard you; send to me directly"
+PKT_CMD = 0x43  # "C" server -> badge: opcode byte + argument (CMD_*)
+PKT_REPLY = 0x52  # "R" badge -> server: echo of a CMD_PING argument
+
+CMD_PING = b"P"  # P<token>: badge echoes <token> in a PKT_REPLY
+
+STATUS_BODY = "<BHBHIIBBHIIIb"
+STATUS_FIELDS = (
+    "boot",
+    "seq",
+    "state",
+    "flight_ms",
+    "air_total_ms",
+    "air_at_reset_ms",
+    "drops",
+    "throws",
+    "steps",
+    "still_ms",
+    "throw_ms",
+    "drop_ms",
+    "rssi",
+)
+STATUS_SIZE = UDP_HEADER_SIZE + struct.calcsize(STATUS_BODY)
+UDP_NAME_MAX = 16
+
+
+def _header(kind, badge_id):
+    return struct.pack(UDP_HEADER, MAGIC, UDP_VERSION, kind, badge_id & 0xFFFFFFFF)
+
+
+def unpack_header(data):
+    """Return (type, badge_id) for a datagram of this protocol, else None."""
+    if len(data) < UDP_HEADER_SIZE:
+        return None
+    magic, ver, kind, badge_id = struct.unpack_from(UDP_HEADER, data, 0)
+    if magic != MAGIC or ver != UDP_VERSION:
+        return None
+    return kind, badge_id
+
+
+def pack_status(badge_id, boot, seq, state, flight_ms, air_total_ms, air_at_reset_ms, drops, throws, steps,
+                still_ms, throw_ms, drop_ms, rssi, name):
+    body = struct.pack(
+        STATUS_BODY,
+        boot & 0xFF,
+        seq & 0xFFFF,
+        state & 0xFF,
+        min(flight_ms, 0xFFFF),
+        air_total_ms & 0xFFFFFFFF,
+        air_at_reset_ms & 0xFFFFFFFF,
+        drops & 0xFF,
+        throws & 0xFF,
+        steps & 0xFFFF,
+        still_ms & 0xFFFFFFFF,
+        throw_ms & 0xFFFFFFFF,
+        drop_ms & 0xFFFFFFFF,
+        max(-128, min(127, rssi)),
+    )
+    return _header(PKT_STATUS, badge_id) + body + name.encode()[:UDP_NAME_MAX]
+
+
+def unpack_status(data):
+    """Decode a PKT_STATUS datagram into a dict (with badge_id and name), else None."""
+    head = unpack_header(data)
+    if head is None or head[0] != PKT_STATUS or len(data) < STATUS_SIZE:
+        return None
+    out = dict(zip(STATUS_FIELDS, struct.unpack_from(STATUS_BODY, data, UDP_HEADER_SIZE)))
+    out["badge_id"] = head[1]
+    out["name"] = bytes(data[STATUS_SIZE:STATUS_SIZE + UDP_NAME_MAX]).decode("utf-8", "replace")
+    return out
+
+
+def pack_ack(badge_id):
+    return _header(PKT_ACK, badge_id)
+
+
+def pack_cmd(badge_id, op, arg=b""):
+    return _header(PKT_CMD, badge_id) + op + arg
+
+
+def pack_reply(badge_id, arg):
+    return _header(PKT_REPLY, badge_id) + arg
+
+
+def unpack_payload(data):
+    """Return (type, badge_id, payload bytes after the header), else None."""
+    head = unpack_header(data)
+    if head is None:
+        return None
+    return head[0], head[1], bytes(data[UDP_HEADER_SIZE:])

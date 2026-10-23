@@ -1,11 +1,13 @@
 """Live dashboard: time each badge has spent in each state since it was reset.
 
-Listens to badge advertisements only (no pairing), so it follows any number
-of badges. Each badge counts milliseconds in still / throw / drop since boot
-and advertises the totals in its scan response. The page can also zero a
-badge; that stores a baseline here, which a badge reboot clears.
+Badges report over Wi-Fi: each sends a UDP status datagram
+(protocol.pack_status) to UDP port protocol.UDP_PORT on every state change and
+every 250 ms, with its milliseconds in still / throw / drop since boot. The
+dashboard acks each badge (so broadcasting badges learn where it is) and can
+rename, identify and ping badges. The page can also zero a badge; that stores
+a baseline here, which a badge reboot clears.
 
-Usage:  python dashboard.py [--port 8766] [--no-browser]
+Usage:  python dashboard.py [--port 8766] [--udp-port 47217] [--no-browser]
 """
 import argparse
 import asyncio
@@ -15,9 +17,8 @@ import webbrowser
 from pathlib import Path
 
 from aiohttp import WSMsgType, web
-from bleak import BleakScanner
 
-from protocol import COMPANY_ID, STATS_UUID, unpack_mfg, unpack_stats
+import protocol
 
 ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "web"
@@ -25,18 +26,12 @@ STATE_FILE = ROOT / "dashboard_state.json"
 STATES = ("still", "throw", "drop")
 # Advertised state codes (protocol.STATE_*) folded into the model's three.
 STATE_BY_CODE = {0: "still", 1: "still", 2: "throw", 3: "throw", 4: "drop", 5: "still"}
-OFFLINE_S = 20.0  # macOS reports a badge only every ~0.5-7.5 s, more after a rescan
+OFFLINE_S = 5.0  # badges send a heartbeat every 250 ms
 HISTORY_S = 3600  # air-time history kept for the graph
 SAVE_EVERY_S = 10.0
-PUSH_MIN_S = 0.05  # adverts heard within this are pushed to pages together
+PUSH_MIN_S = 0.05  # reports heard within this are pushed to pages together
 TICK_S = 0.5  # pages also get a status this often, to age offline badges
-# A long-running CoreBluetooth scan can stop reporting a badge that left range
-# and came back, while a fresh scan sees it at once. So restart the scan soon
-# after a badge goes quiet, and at least every RESCAN_MAX_S forever after.
-RESCAN_SILENT_S = 8.0
-RESCAN_FAST_S = 120.0  # quiet for longer: rely on the RESCAN_MAX_S restarts
-RESCAN_MIN_S = 10.0
-RESCAN_MAX_S = 60.0
+ACK_EVERY_S = 2.0  # how often each badge is told where the dashboard is
 
 
 class Dashboard:
@@ -84,14 +79,20 @@ class Dashboard:
         if rec["boot"] is not None and rec["boot"] != mfg["boot"]:
             rec["totals"] = None  # rebooted: totals from the old boot no longer apply
         rec["boot"] = mfg["boot"]
-        # The scan response can lag the advert across a reboot; only trust
-        # totals that belong to the current boot.
+        # Only trust totals that belong to the current boot (a BLE scan
+        # response could lag the advert across a reboot).
         if stats is not None and stats["boot"] == mfg["boot"]:
             rec["totals"] = {s: stats[s + "_ms"] for s in STATES}
         base = self.baselines.get(badge_id)
         if base is not None and base["boot"] != mfg["boot"]:
             del self.baselines[badge_id]  # the reboot already zeroed the badge
             self.save()
+
+    def observe_status(self, address, status, now=None):
+        """Apply one UDP status datagram (protocol.unpack_status output)."""
+        mfg = {"badge_id": status["badge_id"], "boot": status["boot"], "state": status["state"]}
+        stats = {k: status[k] for k in ("boot", "still_ms", "throw_ms", "drop_ms")}
+        self.observe(address, status["name"] or None, status["rssi"], mfg, stats, now)
 
     def shown_totals(self, badge_id):
         rec = self.badges[badge_id]
@@ -152,11 +153,6 @@ class Dashboard:
             while h and h[0][0] < cutoff:
                 h.pop(0)
 
-    def needs_rescan(self, now=None):
-        """True when a badge went quiet lately; older silences rely on the periodic rescan."""
-        now = time.time() if now is None else now
-        return any(RESCAN_SILENT_S <= now - rec["seen"] <= RESCAN_FAST_S for rec in self.badges.values())
-
     def snapshot(self, now=None):
         now = time.time() if now is None else now
         badges = []
@@ -179,17 +175,53 @@ class Dashboard:
         return {"type": "status", "badges": badges}
 
 
-def decode(adv):
-    data = adv.manufacturer_data.get(COMPANY_ID)
-    if not data:
-        return None, None
-    mfg = unpack_mfg(COMPANY_ID.to_bytes(2, "little") + data)
-    return mfg, unpack_stats(adv.service_data.get(STATS_UUID))
+class BadgeLink(asyncio.DatagramProtocol):
+    """UDP endpoint for badge reports; acks them and sends commands."""
+
+    def __init__(self, dash, heard, on_reply=None):
+        self.dash = dash
+        self.heard = heard
+        self.on_reply = on_reply
+        self.transport = None
+        self.addrs = {}  # badge_id -> (ip, port) last heard from
+        self.acked = {}  # badge_id -> time of the last ack
+
+    def connection_made(self, transport):
+        self.transport = transport
+
+    def datagram_received(self, data, addr):
+        msg = protocol.unpack_payload(data)
+        if msg is None:
+            return
+        kind, raw_id, payload = msg
+        badge_id = "%08x" % raw_id
+        now = time.time()
+        if kind == protocol.PKT_STATUS:
+            status = protocol.unpack_status(data)
+            if status is None:
+                return
+            self.addrs[badge_id] = addr
+            self.dash.observe_status(addr[0], status, now)
+            self.heard.set()
+            if now - self.acked.get(badge_id, 0) >= ACK_EVERY_S:
+                self.acked[badge_id] = now
+                self.transport.sendto(protocol.pack_ack(raw_id), addr)
+        elif kind == protocol.PKT_REPLY and self.on_reply:
+            self.on_reply(badge_id, payload)
+
+    def command(self, badge_id, op, arg=b""):
+        """Send a command to a badge at its last address; False if never heard."""
+        addr = self.addrs.get(badge_id)
+        if addr is None or self.transport is None:
+            return False
+        self.transport.sendto(protocol.pack_cmd(int(badge_id, 16), op, arg), addr)
+        return True
 
 
 async def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--port", type=int, default=8766)
+    parser.add_argument("--udp-port", type=int, default=protocol.UDP_PORT, help="badge reports (default: %(default)s)")
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--state", type=Path, default=STATE_FILE, help="baselines, badges and history (default: %(default)s)")
     args = parser.parse_args()
@@ -197,12 +229,7 @@ async def main():
     dash = Dashboard(args.state)
     sockets = set()
     heard = asyncio.Event()
-
-    def on_adv(dev, adv):
-        mfg, stats = decode(adv)
-        if mfg is not None:
-            dash.observe(dev.address, adv.local_name, adv.rssi, mfg, stats)
-            heard.set()
+    link = BadgeLink(dash, heard)
 
     async def index(_request):
         html = (WEB_DIR / "dashboard.html").read_text(encoding="utf-8")
@@ -221,6 +248,12 @@ async def main():
                 op = json.loads(msg.data)
                 if op.get("op") == "reset":
                     dash.reset(op.get("badge_id"))
+                elif op.get("op") == "rename":
+                    name = str(op.get("name", "")).strip()[: protocol.UDP_NAME_MAX]
+                    if name:
+                        link.command(op.get("badge_id", ""), protocol.CMD_NAME, name.encode())
+                elif op.get("op") == "identify":
+                    link.command(op.get("badge_id", ""), protocol.CMD_IDENTIFY)
                 elif op.get("op") == "reset_all":
                     dash.reset_all()
                     history = {"type": "history", "history": dash.history, "cleared_ms": dash.cleared_ms}
@@ -256,42 +289,20 @@ async def main():
                 except (ConnectionError, RuntimeError):
                     sockets.discard(ws)
 
-    async def scan():
-        while True:
-            scanner = BleakScanner(on_adv)
-            try:
-                await scanner.start()
-            except Exception as exc:  # e.g. Bluetooth switched off; keep trying
-                print(time.strftime("%H:%M:%S"), "scan failed to start:", exc, flush=True)
-                await asyncio.sleep(5)
-                continue
-            started = time.time()
-            try:
-                while True:
-                    await asyncio.sleep(1)
-                    age = time.time() - started
-                    if age >= RESCAN_MAX_S or (age >= RESCAN_MIN_S and dash.needs_rescan()):
-                        if age < RESCAN_MAX_S:
-                            print(time.strftime("%H:%M:%S"), "a badge went quiet; restarting the scan", flush=True)
-                        break
-            finally:
-                try:
-                    await scanner.stop()
-                except Exception as exc:
-                    print(time.strftime("%H:%M:%S"), "scan failed to stop:", exc, flush=True)
-
     app = web.Application()
     app.router.add_get("/", index)
     app.router.add_get("/ws", ws_handler)
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, "localhost", args.port).start()
+    loop = asyncio.get_running_loop()
+    await loop.create_datagram_endpoint(lambda: link, local_addr=("0.0.0.0", args.udp_port))
     url = "http://localhost:%d" % args.port
-    print("Dashboard on", url)
+    print("Dashboard on", url, "| badges report to UDP port", args.udp_port, flush=True)
     if not args.no_browser:
         webbrowser.open(url)
     try:
-        await asyncio.gather(scan(), pump())
+        await pump()
     finally:
         dash.save()
 

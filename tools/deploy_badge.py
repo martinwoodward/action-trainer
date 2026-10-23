@@ -4,24 +4,38 @@
     python tools/deploy_badge.py kiosk    # also install badge/main.py as /system/main.py
     python tools/deploy_badge.py restore  # put the stock /system/main.py back
 
+Wi-Fi: `app` and `kiosk` take --wifi-ssid/--wifi-password (or the
+AIRTIME_WIFI_SSID/AIRTIME_WIFI_PASSWORD environment variables) and --server
+(an IP, `auto` for this computer's address, or `none` to broadcast). They are
+merged into /state/airtime_net.json on the badge; settings not given are kept.
+Without an SSID there, the badge falls back to WIFI_SSID in /system/secrets.py.
+The password is never printed or written into this repository.
+
 `/system` is a read-only FAT over serial. `kiosk` and `restore` remount the
 same flash region read-write for the duration of one mpremote session, then
 reset the badge.
 """
 
 import argparse
+import json
+import os
+import socket
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 APP_SRC = ROOT / "badge" / "apps" / "airtime" / "__init__.py"
+APP_ASSETS = ROOT / "badge" / "apps" / "airtime" / "assets"
 PROTOCOL = ROOT / "protocol.py"
 MODEL = ROOT / "dist" / "model.py"
 KIOSK_MAIN = ROOT / "badge" / "main.py"
 STOCK_MAIN = ROOT / "badge" / "main.orig.py"
 USB_ID = "2e8a:1101"
 
+NET_CONFIG = "/state/airtime_net.json"
+NET_UPLOAD = "/state/airtime_net.new"
 STATE_APP = "/state/apps/airtime"
 SYSTEM_APP = "/system/apps/airtime"
 
@@ -60,6 +74,56 @@ def removedir(path):
     )
 
 
+# Merges the uploaded settings into the badge's config; "" removes a key.
+MERGE_NET = (
+    "import json, os\n"
+    "cfg = {}\n"
+    "try:\n"
+    f"    cfg = json.load(open({NET_CONFIG!r}))\n"
+    "except (OSError, ValueError):\n"
+    "    pass\n"
+    f"for k, v in json.load(open({NET_UPLOAD!r})).items():\n"
+    "    if v == '':\n"
+    "        cfg.pop(k, None)\n"
+    "    else:\n"
+    "        cfg[k] = v\n"
+    f"with open({NET_CONFIG!r}, 'w') as f:\n"
+    "    json.dump(cfg, f)\n"
+    f"os.remove({NET_UPLOAD!r})\n"
+    "print('wifi config:', 'ssid set' if cfg.get('ssid') else 'no ssid', '| server', cfg.get('server') or 'broadcast')\n"
+)
+
+
+def local_ip():
+    """This computer's address on the default route (no packets are sent)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.connect(("192.0.2.1", 9))
+        return s.getsockname()[0]
+
+
+def net_settings(args):
+    out = {}
+    ssid = args.wifi_ssid or os.environ.get("AIRTIME_WIFI_SSID")
+    password = args.wifi_password or os.environ.get("AIRTIME_WIFI_PASSWORD")
+    if ssid:
+        out["ssid"] = ssid
+    if password is not None:
+        out["password"] = password
+    if args.server:
+        out["server"] = "" if args.server == "none" else local_ip() if args.server == "auto" else args.server
+    return out
+
+
+def net_steps(args, tmpdir):
+    settings = net_settings(args)
+    if not settings:
+        return []
+    path = Path(tmpdir) / "airtime_net.json"
+    path.write_text(json.dumps(settings), encoding="utf-8")
+    os.chmod(path, 0o600)
+    return [["fs", "cp", str(path), f":{NET_UPLOAD}"], ["exec", MERGE_NET]]
+
+
 def find_port():
     out = subprocess.run(
         [sys.executable, "-m", "mpremote", "devs"], capture_output=True, text=True, check=True
@@ -87,11 +151,18 @@ def app_files(dest):
         ["fs", "cp", str(APP_SRC), f":{dest}/__init__.py"],
         ["fs", "cp", str(PROTOCOL), f":{dest}/protocol.py"],
         ["fs", "cp", str(MODEL), f":{dest}/model.py"],
+        ["exec", makedirs(f"{dest}/assets")],
+        *(["fs", "cp", str(png), f":{dest}/assets/{png.name}"] for png in sorted(APP_ASSETS.glob("*.png"))),
     ]
 
 
 def deploy_app(port, args):
-    chain = app_files(STATE_APP)
+    with tempfile.TemporaryDirectory() as tmp:
+        _deploy_app(port, args, net_steps(args, tmp))
+
+
+def _deploy_app(port, args, net):
+    chain = app_files(STATE_APP) + net
     if args.no_reset:
         chain.append(["exec", "--no-follow", f"exec(open('{STATE_APP}/__init__.py').read())"])
     else:
@@ -100,9 +171,15 @@ def deploy_app(port, args):
 
 
 def deploy_kiosk(port, args):
+    with tempfile.TemporaryDirectory() as tmp:
+        _deploy_kiosk(port, args, net_steps(args, tmp))
+
+
+def _deploy_kiosk(port, args, net):
     mpremote(
         port,
         *app_files(STATE_APP),
+        *net,
         ["exec", REMOUNT_RW],
         *app_files(SYSTEM_APP),
         ["fs", "cp", str(KIOSK_MAIN), ":/system/main.py"],
@@ -129,7 +206,12 @@ def main():
     app = sub.add_parser("app", help="copy the app and model to /state/apps/airtime")
     app.add_argument("--no-reset", action="store_true", help="start the app in place instead of resetting")
     app.set_defaults(func=deploy_app)
-    sub.add_parser("kiosk", help="install the app and the kiosk /system/main.py").set_defaults(func=deploy_kiosk)
+    kiosk = sub.add_parser("kiosk", help="install the app and the kiosk /system/main.py")
+    kiosk.set_defaults(func=deploy_kiosk)
+    for p in (app, kiosk):
+        p.add_argument("--wifi-ssid", help="Wi-Fi network (default: $AIRTIME_WIFI_SSID, else keep)")
+        p.add_argument("--wifi-password", help="Wi-Fi password (default: $AIRTIME_WIFI_PASSWORD, else keep)")
+        p.add_argument("--server", help="dashboard IP, 'auto' (this computer) or 'none' (broadcast)")
     sub.add_parser("restore", help="restore the stock /system/main.py").set_defaults(func=restore)
     args = parser.parse_args()
     args.func(args.port or find_port(), args)

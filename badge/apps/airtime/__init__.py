@@ -1,9 +1,10 @@
-"""Air-time: BLE IMU streamer and throw/drop detector.
+"""Air-time: throw/drop detector that reports to the dashboard over Wi-Fi.
 
-Advertises air-time counters as manufacturer data and exposes a GATT service
-that streams raw six-axis IMU samples. The laptop-side recorder in
-martinwoodward/action-trainer connects to that service to capture labelled
-training sessions.
+Joins Wi-Fi (settings in /state/airtime_net.json, else /system/secrets.py) and
+sends a UDP status datagram (protocol.pack_status) on every state change and
+every 250 ms. It sends to the configured dashboard address, or broadcasts
+until a dashboard acks. The dashboard can rename the badge, flash its screen
+and ping it. This build has no Bluetooth, so the recorder can't connect.
 
 The app shows the generated model's state (still / throw / drop) and has no
 exit: on a kiosk badge (`badge/main.py`) it is the only thing that runs.
@@ -39,10 +40,11 @@ APP_DIR = _app_dir()
 os.chdir(APP_DIR)
 sys.path.insert(0, APP_DIR)
 
-import bluetooth
+import json
 import machine
 import math
-import struct
+import network
+import socket
 
 from badgeware import State
 
@@ -59,16 +61,6 @@ FLYING = 2
 THROW = 3
 DROP = 4
 HANDLING = 5
-
-STATE_NAMES = ("STILL", "WALK", "FLYING", "THROW", "DROP", "HANDLING")
-STATE_COLORS = (
-    (36, 44, 54),
-    (26, 92, 60),
-    (28, 76, 150),
-    (176, 108, 16),
-    (156, 36, 44),
-    (72, 56, 104),
-)
 
 EV_STEP = 0x01
 EV_LAUNCH = 0x02
@@ -90,26 +82,14 @@ STEP_MIN_MS = 220
 WALK_WINDOW_MS = 2200
 EVENT_SHOW_MS = 900
 
-MODEL_COLORS = {
-    "still": (36, 44, 54),
-    "walk": (26, 92, 60),
-    "throw": (176, 108, 16),
-    "drop": (156, 36, 44),
-}
-
-# Shorter advertising intervals give a scanning laptop more chances to hear
-# each update (macOS only listens in short windows).
-ADV_INTERVAL_US = 20000
-PROMPT_FLASH_MS = 500  # recorder prompts show green when they change
-ADV_REFRESH_MS = 250
-ADV_CHANGE_MS = 100  # re-advertise a state change at once, at most this often
-NOTIFY_MIN_MS = 40
-MAX_BUFFERED_SAMPLES = 60
-
-_IRQ_CENTRAL_CONNECT = 1
-_IRQ_CENTRAL_DISCONNECT = 2
-_IRQ_GATTS_WRITE = 3
-_IRQ_MTU_EXCHANGED = 21
+STATUS_EVERY_MS = 250  # heartbeat to the dashboard
+STATUS_CHANGE_MS = 100  # a state change is sent at once, at most this often
+STATUS_REPEAT_MS = 60  # and repeated once, since Wi-Fi drops a few % of datagrams
+WIFI_RETRY_MS = 10000
+WIFI_JOIN_TIMEOUT_MS = 20000
+SERVER_FORGET_MS = 10000  # no ack for this long: broadcast again
+IDENTIFY_MS = 1200  # Find on the dashboard blinks the screen this long
+NET_CONFIG = "/state/airtime_net.json"  # {"ssid", "password", "server"}; written by deploy_badge.py
 
 state_store = {"name": ""}
 State.load("airtime", state_store)
@@ -216,163 +196,223 @@ class Detector:
         return self.air_total_ms - self.air_at_reset_ms
 
 
-class Link:
-    """Raw BLE GATT server: advertising, IMU notifications, control writes."""
+class Net:
+    """Wi-Fi link to the dashboard: UDP status out, acks and commands in."""
 
     def __init__(self, detector):
         self.detector = detector
-        self.connected = set()
-        self.prompt = ""
-        self.prompt_at = 0
         self.identify_until = 0
-        self.mtu = 23
         self.seq = 0
-        self.adv_seq = 0
-        self._pending = []
-        self._last_notify = 0
-        self._last_adv = 0
-        self._adv_state = None
-        self._name_dirty = False
+        self.sock = None
+        self.ip = None
+        self.error = None
+        self.server = None  # learned from the dashboard's acks
+        self.server_heard = 0
+        self.sent = 0
+        self.failed = 0
+        self.joins = 0
+        self._last_send = 0
+        self._sent_state = None
+        self._repeat_at = None
+        self._join_at = None
+        self._bcast = "255.255.255.255"
 
-        self.ble = bluetooth.BLE()
-        self.ble.active(True)
+        cfg = load_net_config()
+        self.ssid = cfg.get("ssid")
+        self.password = cfg.get("password", "")
+        self.fixed = (cfg["server"], protocol.UDP_PORT) if cfg.get("server") else None
+
         try:
-            self.ble.config(mtu=247)
-        except (OSError, ValueError):
+            network.hostname("airtime-%04x" % (badge_id & 0xFFFF))
+        except (AttributeError, OSError, ValueError):
             pass
-        self.ble.irq(self._irq)
-
-        service = (
-            bluetooth.UUID(protocol.SERVICE_UUID),
-            (
-                (bluetooth.UUID(protocol.STREAM_UUID), bluetooth.FLAG_READ | bluetooth.FLAG_NOTIFY),
-                (
-                    bluetooth.UUID(protocol.CONTROL_UUID),
-                    bluetooth.FLAG_WRITE | bluetooth.FLAG_WRITE_NO_RESPONSE,
-                ),
-                (bluetooth.UUID(protocol.INFO_UUID), bluetooth.FLAG_READ),
-            ),
-        )
-        ((self.stream_h, self.control_h, self.info_h),) = self.ble.gatts_register_services((service,))
-        self.ble.gatts_write(self.info_h, self._info())
-        self.ble.gatts_set_buffer(self.control_h, 64, False)
-        self.advertise(0)
-
-    def _info(self):
-        return ("airtime v%d id=%08x boot=%d lsb_per_g=%d" % (
-            protocol.VERSION,
-            badge_id,
-            boot_count,
-            int(LSB_PER_G),
-        )).encode()
+        self.wlan = network.WLAN(network.STA_IF)
+        self.wlan.active(True)
+        try:
+            # Power saving holds received packets for a beacon interval or more.
+            self.wlan.config(pm=getattr(network.WLAN, "PM_PERFORMANCE", 0xA11140))
+        except (AttributeError, OSError, ValueError):
+            pass
+        if not self.ssid:
+            self.error = "no WiFi cfg"
 
     @property
-    def samples_per_packet(self):
-        room = self.mtu - 3 - protocol.STREAM_HEADER_SIZE
-        return max(1, room // protocol.SAMPLE_SIZE)
+    def online(self):
+        return self.sock is not None
 
-    def _irq(self, event, data):
-        if event == _IRQ_CENTRAL_CONNECT:
-            self.connected.add(data[0])
-        elif event == _IRQ_CENTRAL_DISCONNECT:
-            self.connected.discard(data[0])
-            self.mtu = 23
-            self.prompt = ""
-            self._pending = []
-        elif event == _IRQ_MTU_EXCHANGED:
-            self.mtu = data[1]
-        elif event == _IRQ_GATTS_WRITE:
-            if data[1] == self.control_h:
-                self._control(self.ble.gatts_read(self.control_h))
+    def _join(self, now):
+        self._join_at = now
+        self.joins += 1
+        try:
+            self.wlan.disconnect()
+        except OSError:
+            pass
+        try:
+            self.wlan.connect(self.ssid, self.password)
+        except OSError as exc:
+            self.error = "join err %s" % exc
 
-    def _control(self, payload):
-        global badge_name
-        if not payload:
+    def _open(self):
+        self.ip, mask = self.wlan.ifconfig()[:2]
+        try:
+            self._bcast = ".".join(
+                str(int(a) | (255 - int(m))) for a, m in zip(self.ip.split("."), mask.split("."))
+            )
+        except ValueError:
+            self._bcast = "255.255.255.255"
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        except (AttributeError, OSError):
+            pass
+        sock.bind(("0.0.0.0", protocol.UDP_PORT))
+        sock.setblocking(False)
+        self.sock = sock
+        self.error = None
+
+    def _close(self):
+        if self.sock is not None:
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+        self.sock = None
+        self.ip = None
+        self.server = None
+
+    def _wifi(self, now):
+        """Join and rejoin without blocking the frame loop."""
+        if not self.ssid:
             return
-        op = payload[:1]
-        arg = payload[1:]
-        if op == protocol.CMD_LABEL:
-            prompt = arg.decode()[:24]
-            if prompt != self.prompt:
-                self.prompt = prompt
-                self.prompt_at = badge.ticks
-        elif op == protocol.CMD_IDENTIFY:
-            self.identify_until = badge.ticks + 600
-        elif op == protocol.CMD_NAME:
-            name = arg.decode().strip()[:16]
-            if name:
-                badge_name = name
-                state_store["name"] = name
-                self._name_dirty = True
+        status = self.wlan.status()
+        if status == network.STAT_GOT_IP and self.wlan.isconnected():
+            if self.sock is None:
+                try:
+                    self._open()
+                except OSError as exc:
+                    self.error = "sock %s" % exc
+                    self._close()
+            return
+        if self.sock is not None:
+            self._close()  # lost the network
+        if status in (network.STAT_WRONG_PASSWORD, network.STAT_NO_AP_FOUND, network.STAT_CONNECT_FAIL):
+            self.error = {
+                network.STAT_WRONG_PASSWORD: "bad password",
+                network.STAT_NO_AP_FOUND: "no AP",
+            }.get(status, "join failed")
+        if self._join_at is None or (
+            status != network.STAT_CONNECTING and now - self._join_at >= WIFI_RETRY_MS
+        ) or now - self._join_at >= WIFI_JOIN_TIMEOUT_MS:
+            self._join(now)
 
-    def advertise(self, now):
+    def destination(self, now):
+        if self.fixed:
+            return self.fixed
+        if self.server and now - self.server_heard < SERVER_FORGET_MS:
+            return self.server
+        return (self._bcast, protocol.UDP_PORT)
+
+    def send_status(self, now):
         d = self.detector
-        self.adv_seq = (self.adv_seq + 1) & 0xFF
-        self._adv_state = shown_state()
-        mfg = protocol.pack_mfg(
+        self.seq = (self.seq + 1) & 0xFFFF
+        state = shown_state()
+        self._repeat_at = now + STATUS_REPEAT_MS if state != self._sent_state else None
+        self._sent_state = state
+        try:
+            rssi = self.wlan.status("rssi")
+        except (OSError, ValueError):
+            rssi = 0
+        packet = protocol.pack_status(
             badge_id,
             boot_count,
-            self.adv_seq,
-            self._adv_state,
+            self.seq,
+            self._sent_state,
             d.flight_ms,
             d.air_total_ms,
             d.air_at_reset_ms,
             d.drops,
             d.throws,
             d.steps,
+            state_ms[STILL],
+            state_ms[THROW],
+            state_ms[DROP],
+            rssi,
+            badge_name,
         )
         try:
-            self.ble.gap_advertise(None)
-            self.ble.gap_advertise(
-                ADV_INTERVAL_US,
-                adv_data=protocol.adv_payload(mfg),
-                resp_data=protocol.scan_response(
-                    badge_name,
-                    protocol.pack_stats(boot_count, state_ms[STILL], state_ms[THROW], state_ms[DROP]),
-                ),
-                connectable=True,
-            )
+            self.sock.sendto(packet, self.destination(now))
+            self.sent += 1
         except OSError:
-            pass
-        self._last_adv = now
+            self.failed += 1  # e.g. ENOMEM while the radio is busy; the next heartbeat retries
+        self._last_send = now
 
-    def queue(self, sample):
-        if not self.connected:
-            return
-        self._pending.append(sample)
-        if len(self._pending) > MAX_BUFFERED_SAMPLES:
-            del self._pending[:-MAX_BUFFERED_SAMPLES]
-
-    def service(self, now):
-        if self._name_dirty:
-            self._name_dirty = False
-            State.save("airtime", state_store)
-            self.ble.gatts_write(self.info_h, self._info())
-            self.advertise(now)
-
-        if now - self._last_adv >= ADV_REFRESH_MS or (
-            shown_state() != self._adv_state and now - self._last_adv >= ADV_CHANGE_MS
-        ):
-            self.advertise(now)
-
-        if not self.connected or not self._pending:
-            return
-        if now - self._last_notify < NOTIFY_MIN_MS and len(self._pending) < self.samples_per_packet:
-            return
-
-        batch = self._pending[: self.samples_per_packet]
-        data = protocol.pack_samples(self.seq, batch)
-        sent = False
-        for conn in tuple(self.connected):
+    def _receive(self, now):
+        for _ in range(4):
             try:
-                self.ble.gatts_notify(conn, self.stream_h, data)
-                sent = True
+                data, addr = self.sock.recvfrom(128)
+            except OSError:
+                return
+            msg = protocol.unpack_payload(data)
+            if msg is None or msg[1] != badge_id:
+                continue
+            kind, _, payload = msg
+            if kind in (protocol.PKT_ACK, protocol.PKT_CMD):
+                self.server = (addr[0], protocol.UDP_PORT)
+                self.server_heard = now
+            if kind == protocol.PKT_CMD and payload:
+                self._command(now, payload[:1], payload[1:], addr)
+
+    def _command(self, now, op, arg, addr):
+        global badge_name
+        if op == protocol.CMD_IDENTIFY:
+            self.identify_until = now + IDENTIFY_MS
+        elif op == protocol.CMD_NAME:
+            name = arg.decode().strip()[: protocol.UDP_NAME_MAX]
+            if name and name != badge_name:
+                badge_name = name
+                state_store["name"] = name
+                State.save("airtime", state_store)
+            self.send_status(now)
+        elif op == protocol.CMD_PING:
+            try:
+                self.sock.sendto(protocol.pack_reply(badge_id, arg), addr)
             except OSError:
                 pass
-        if sent:
-            self.seq = (self.seq + 1) & 0xFFFF
-            del self._pending[: len(batch)]
-            self._last_notify = now
+
+    def service(self, now):
+        self._wifi(now)
+        if self.sock is None:
+            return
+        self._receive(now)
+        if now - self._last_send >= STATUS_EVERY_MS or (
+            shown_state() != self._sent_state and now - self._last_send >= STATUS_CHANGE_MS
+        ) or (self._repeat_at is not None and now >= self._repeat_at):
+            self.send_status(now)
+
+    def label(self):
+        if self.sock is not None:
+            return "WiFi %s%s" % (self.ip, "" if self.server or self.fixed else " bc")
+        return "WiFi %s" % (self.error or "...")
+
+
+def load_net_config():
+    """Wi-Fi and server settings: /state/airtime_net.json, then /system/secrets.py."""
+    cfg = {}
+    try:
+        with open(NET_CONFIG) as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        pass
+    if not cfg.get("ssid"):
+        ns = {}
+        try:
+            exec(open("/system/secrets.py").read(), ns)
+        except (OSError, SyntaxError):
+            pass
+        if ns.get("WIFI_SSID"):
+            cfg["ssid"] = ns["WIFI_SSID"]
+            cfg["password"] = ns.get("WIFI_PASSWORD", "")
+    return cfg
 
 
 class Classifier:
@@ -405,56 +445,186 @@ def shown_state():
 
 detector = Detector()
 classifier = Classifier()
-link = Link(detector)
+link = Net(detector)
 
-screen.font = font.sins
-_, LINE = screen.measure_text("Ag")
-LINE += 2
+# Look of the dashboard's card for this badge (web/dashboard.html): its
+# light theme, the badge's colour and its namesake's picture. Keep PALETTE and
+# NAMESAKES in step with the page.
+PALETTE = (
+    (8, 135, 43), (9, 105, 218), (188, 76, 0), (130, 80, 223), (191, 57, 137),
+    (207, 34, 46), (27, 124, 131), (154, 103, 0), (90, 97, 92), (49, 146, 170),
+)
+# (word in the name, PALETTE index, picture in assets/). copilot.png and
+# mona.png are Primer Octicons (MIT); squirrel.png is Twemoji 1f43f (CC-BY 4.0).
+NAMESAKES = (
+    ("copilot", 1, "copilot"),
+    ("mona", 3, "mona"),
+    ("octocat", 3, "mona"),
+    ("duck", 2, "duck"),
+    ("squirrel", 4, "squirrel"),
+)
+BG = (255, 255, 255)
+INK = (16, 20, 17)
+MUTED = (88, 96, 90)
+DROP_RGB = (207, 34, 46)
+
+NAME_FONTS = (font.absolute, font.nope, font.sins)
+AIR_FONT = font.ziplock
+LABEL_FONT = font.sins
+PILL_FONT = font.torch
+
+_theme = {"name": None}
+
+
+def theme():
+    """The badge's colour and picture, worked out again only after a rename."""
+    if _theme["name"] != badge_name:
+        key = badge_name.lower()
+        hit = None
+        for word, index, picture in NAMESAKES:
+            if word in key:
+                hit = (index, picture)
+                break
+        _theme["name"] = badge_name
+        _theme["rgb"] = PALETTE[hit[0] if hit else badge_id % len(PALETTE)]
+        _theme["icon"] = None
+        if hit:
+            try:
+                _theme["icon"] = image.load("assets/%s.png" % hit[1])
+            except (OSError, ValueError):
+                pass
+    return _theme
+
+
+def fmt_air(ms):
+    """Air time as the dashboard shows it: 12.3 s, 4:05 or 1:02:03."""
+    sec = ms / 1000
+    if sec < 60:
+        return "%.1f s" % sec
+    sec = int(sec)
+    h, m, r = sec // 3600, sec // 60 % 60, sec % 60
+    return "%d:%02d:%02d" % (h, m, r) if h else "%d:%02d" % (m, r)
+
+
+def pen(rgb):
+    screen.pen = color.rgb(*rgb)
+
+
+def pill(text, rgb, right, y):
+    screen.font = PILL_FONT
+    w, h = screen.measure_text(text)
+    x = right - int(w) - 8
+    pen(rgb)
+    screen.shape(shape.rounded_rectangle(x, y, int(w) + 8, int(h) + 4, 3))
+    pen((255, 255, 255))
+    screen.text(text, x + 4, y + 2)
+
+
+BATTERY_EVERY_MS = 2000
+LOW_BATTERY = 20  # percent; drawn in red at or below this
+_battery = {"at": None, "level": None, "charging": False}
+
+
+def battery():
+    """Battery percent and charging flag, read at most every 2 s."""
+    now = badge.ticks
+    if _battery["at"] is None or now - _battery["at"] >= BATTERY_EVERY_MS:
+        _battery["at"] = now
+        try:
+            _battery["level"] = max(0, min(100, int(badge.battery_level())))
+            _battery["charging"] = bool(badge.is_charging())
+        except (AttributeError, OSError, ValueError):
+            _battery["level"] = None
+    return _battery
+
+
+def draw_battery(right, top):
+    """Battery icon and percentage ending at `right`; returns its left edge."""
+    b = battery()
+    if b["level"] is None:
+        return right
+    level = b["level"]
+    screen.font = LABEL_FONT
+    text = ("+%d%%" if b["charging"] else "%d%%") % level
+    tw, th = screen.measure_text(text)
+    tw = int(tw)
+    fill = DROP_RGB if level <= LOW_BATTERY and not b["charging"] else INK
+    pen(MUTED)
+    screen.text(text, right - tw, top)
+    # Body 14x8 with a 2x4 nub, left of the text.
+    bx = right - tw - 21
+    by = top + int(th) // 2 - 4
+    screen.rectangle(bx, by, 14, 8)
+    screen.rectangle(bx + 14, by + 2, 2, 4)
+    pen(BG)
+    screen.rectangle(bx + 1, by + 1, 12, 6)
+    pen(fill)
+    screen.rectangle(bx + 2, by + 2, max(1, 10 * level // 100), 4)
+    return bx
+
 
 last_g = 1.0
 
 
 def draw():
     now = badge.ticks
+    t = theme()
+    rgb = t["rgb"]
     if now < link.identify_until:
-        screen.pen = color.rgb(255, 255, 255)
+        pen(rgb if (link.identify_until - now) // 150 % 2 else BG)
         screen.rectangle(screen.clip)
         return
 
-    label = classifier.label if model is not None else STATE_NAMES[detector.state].lower()
-    r, g, b = MODEL_COLORS.get(label, STATE_COLORS[detector.state])
-    screen.pen = color.rgb(r, g, b)
+    pen(BG)
     screen.rectangle(screen.clip)
 
-    screen.pen = color.rgb(255, 255, 255)
-    name = label.upper() if model is not None else "NO MODEL"
-    w, _ = screen.measure_text(name)
-    screen.text(name, (screen.width - w) // 2, 6)
+    # Header: colour swatch, picture and name, as on the dashboard card.
+    pen(rgb)
+    screen.shape(shape.rounded_rectangle(6, 14, 7, 7, 2))
+    x = 18
+    if t["icon"] is not None:
+        screen.blit(t["icon"], vec2(x, 5))
+        x += 28
+    name_right = draw_battery(screen.width - 6, 11) - 4
+    pen(INK)
+    for f in NAME_FONTS:
+        screen.font = f
+        w, h = screen.measure_text(badge_name)
+        if w <= name_right - x:
+            break
+    shown_name = badge_name
+    while w > name_right - x and len(shown_name) > 1:
+        shown_name = shown_name[:-1]
+        w, h = screen.measure_text(shown_name + "..")
+    if shown_name != badge_name:
+        shown_name += ".."
+    screen.text(shown_name, x, 17 - int(h) // 2)
 
-    screen.pen = color.rgb(210, 220, 230)
-    screen.text("air %.2fs" % (detector.streak_ms / 1000), 4, 6 + LINE + 2)
-    screen.text("tot %.2fs" % (detector.air_total_ms / 1000), 4, 6 + LINE * 2 + 2)
-    screen.text(
-        "T%d D%d st%d" % (detector.throws, detector.drops, detector.steps),
-        4,
-        6 + LINE * 3 + 2,
-    )
-    screen.text("%.2fg" % last_g, 4, 6 + LINE * 4 + 2)
+    # Air time since the badge started, with the card's colour bar.
+    pen(rgb)
+    screen.rectangle(8, 40, 2, 42)
+    pen(INK)
+    screen.font = AIR_FONT
+    screen.text(fmt_air(state_ms[THROW]), 16, 42)
+    pen(MUTED)
+    screen.font = LABEL_FONT
+    screen.text("AIR TIME", 16, 68)
 
-    link_text = "BLE %s" % ("LINKED" if link.connected else "adv")
+    shown = shown_state()
+    if shown == THROW:
+        pill("IN THE AIR", rgb, screen.width - 6, 66)
+    elif shown == DROP:
+        pill("DROPPED", DROP_RGB, screen.width - 6, 66)
+
+    # Footer: counts and the Wi-Fi link, muted like the card's meta line.
+    pen(MUTED)
+    screen.font = LABEL_FONT
+    screen.text("T%d D%d" % (detector.throws, detector.drops), 6, screen.height - 16)
+    link_text = link.label()
     w, _ = screen.measure_text(link_text)
-    screen.pen = color.rgb(150, 165, 180)
-    screen.text(link_text, screen.width - w - 4, screen.height - LINE - 4)
-
-    if link.prompt:
-        w, h = screen.measure_text(link.prompt)
-        screen.pen = color.rgb(0, 0, 0, 160)
-        screen.shape(shape.rounded_rectangle(2, screen.height - LINE * 2 - 8, w + 10, h + 6, 3))
-        if badge.ticks - link.prompt_at < PROMPT_FLASH_MS:
-            screen.pen = color.rgb(60, 220, 90)  # new prompt
-        else:
-            screen.pen = color.rgb(255, 214, 90)
-        screen.text(link.prompt, 7, screen.height - LINE * 2 - 5)
+    screen.text(link_text, screen.width - int(w) - 6, screen.height - 16)
+    if model is None:
+        pill("NO MODEL", DROP_RGB, screen.width - 6, 88)
 
 
 def update():
@@ -463,12 +633,11 @@ def update():
     now = badge.ticks
     dt = badge.ticks_delta
     ax, ay, az, gx, gy, gz = badge.imu()
-    events, last_g = detector.update(now, dt, ax, ay, az, gx, gy, gz)
+    _, last_g = detector.update(now, dt, ax, ay, az, gx, gy, gz)
     classifier.update(now, (ax, ay, az, gx, gy, gz))
     shown = shown_state()
     bucket = STATE_BUCKET.get(shown, STILL)
     state_ms[bucket] += dt
-    link.queue(protocol.pack_sample(now, ax, ay, az, gx, gy, gz, events, shown))
     link.service(now)
 
     # No exit: handling the plushy brushes the capacitive pads, and the badge
