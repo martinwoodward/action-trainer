@@ -1,12 +1,8 @@
-"""Air-time wire formats, shared by the badge and the laptop tools.
-
-The Race app reports to the leaderboard over Wi-Fi (UDP, see the end of this
-file). The BLE formats below remain for the recorder and for older builds.
+"""Air-time advertising payload, shared by the badge and the laptop tools.
 
 Legacy advertising leaves 31 bytes; flags (3) + manufacturer AD header (2)
 + this 26-byte body fills it exactly. The badge name goes in the scan
-response, together with per-state time totals (service data, see
-pack_stats). Counters only increase (u8 counters wrap at 256), so listeners can
+response. Counters only increase (u8 counters wrap at 256), so listeners can
 miss packets without losing events.
 """
 
@@ -58,41 +54,9 @@ def adv_payload(mfg):
     return bytes((2, 0x01, 0x06, len(mfg) + 1, 0xFF)) + mfg
 
 
-# Scan response service data (AD 0x16): ms spent in each model state since
-# boot. It is service data rather than a second 0xFFFF manufacturer block so
-# that scanners which merge advert and scan response keep both.
-STATS_UUID16 = 0xA17E
-STATS_UUID = "0000a17e-0000-1000-8000-00805f9b34fb"
-STATS_FORMAT = "<HBIII"
-STATS_BODY_FORMAT = "<BIII"  # as delivered by scanners, after the UUID
-STATS_FIELDS = ("boot", "still_ms", "throw_ms", "drop_ms")
-NAME_MAX = 31 - 2 - struct.calcsize(STATS_FORMAT) - 2  # 12 bytes
-
-
-def pack_stats(boot, still_ms, throw_ms, drop_ms):
-    return struct.pack(
-        STATS_FORMAT,
-        STATS_UUID16,
-        boot & 0xFF,
-        still_ms & 0xFFFFFFFF,
-        throw_ms & 0xFFFFFFFF,
-        drop_ms & 0xFFFFFFFF,
-    )
-
-
-def unpack_stats(data):
-    """Decode stats service data *without* the UUID (bleak's service_data value)."""
-    if data is None or len(data) < struct.calcsize(STATS_BODY_FORMAT):
-        return None
-    return dict(zip(STATS_FIELDS, struct.unpack_from(STATS_BODY_FORMAT, data, 0)))
-
-
-def scan_response(name, stats=None):
-    raw = name.encode()[: NAME_MAX if stats else 29]
-    out = bytes((len(raw) + 1, 0x09)) + raw
-    if stats:
-        out += bytes((len(stats) + 1, 0x16)) + stats
-    return out
+def scan_response(name):
+    raw = name.encode()[:29]
+    return bytes((len(raw) + 1, 0x09)) + raw
 
 
 # --- GATT (recording and setup) ------------------------------------------
@@ -112,6 +76,20 @@ SAMPLE_SIZE = struct.calcsize(SAMPLE_FORMAT)
 CMD_NAME = b"N"  # N<name>: rename the badge and persist it
 CMD_LABEL = b"L"  # L<text>: show a recording prompt on the badge ("" clears)
 CMD_IDENTIFY = b"I"  # I: flash the screen
+CMD_PING = b"P"  # P: heartbeat; the badge drops links that go quiet
+PING_INTERVAL_MS = 2000
+LINK_TIMEOUT_MS = 8000
+# Model upload: B, then D chunks of model.py source, then E<length>,<checksum>.
+# The badge saves it to /state and loads it; INFO then reports model=<checksum>.
+CMD_MODEL_BEGIN = b"B"
+CMD_MODEL_DATA = b"D"
+CMD_MODEL_END = b"E"
+CMD_MODEL_SHOW = b"M"  # M1 shows / M0 hides the model line on the badge (demo); persisted, upload re-shows
+CONTROL_MAX = 244  # control characteristic buffer on the badge
+
+
+def model_checksum(data):
+    return sum(data) & 0xFFFF
 
 
 def pack_samples(seq, samples):
@@ -145,105 +123,3 @@ def unpack_mfg(data):
     if values[0] != COMPANY_ID or values[1] != MAGIC:
         return None
     return dict(zip(FIELDS, values))
-
-
-# --- Wi-Fi (UDP) ------------------------------------------------------------
-# The Race badge app sends a status datagram to the leaderboard on every state
-# change and as a heartbeat. The leaderboard answers with acks (so a badge that
-# broadcasts learns the server's address) and commands. Every datagram starts
-# with MAGIC, UDP_VERSION and a one-byte type.
-UDP_PORT = 47217
-UDP_VERSION = 2
-UDP_HEADER = "<2sBBI"  # magic, version, type, badge_id
-UDP_HEADER_SIZE = struct.calcsize(UDP_HEADER)
-PKT_STATUS = 0x53  # "S" badge -> server
-PKT_ACK = 0x41  # "A" server -> badge: "I heard you; send to me directly"
-PKT_CMD = 0x43  # "C" server -> badge: opcode byte + argument (CMD_*)
-PKT_REPLY = 0x52  # "R" badge -> server: echo of a CMD_PING argument
-
-CMD_PING = b"P"  # P<token>: badge echoes <token> in a PKT_REPLY
-
-STATUS_BODY = "<BHBHIIBBHIIIb"
-STATUS_FIELDS = (
-    "boot",
-    "seq",
-    "state",
-    "flight_ms",
-    "air_total_ms",
-    "air_at_reset_ms",
-    "drops",
-    "throws",
-    "steps",
-    "still_ms",
-    "throw_ms",
-    "drop_ms",
-    "rssi",
-)
-STATUS_SIZE = UDP_HEADER_SIZE + struct.calcsize(STATUS_BODY)
-UDP_NAME_MAX = 16
-
-
-def _header(kind, badge_id):
-    return struct.pack(UDP_HEADER, MAGIC, UDP_VERSION, kind, badge_id & 0xFFFFFFFF)
-
-
-def unpack_header(data):
-    """Return (type, badge_id) for a datagram of this protocol, else None."""
-    if len(data) < UDP_HEADER_SIZE:
-        return None
-    magic, ver, kind, badge_id = struct.unpack_from(UDP_HEADER, data, 0)
-    if magic != MAGIC or ver != UDP_VERSION:
-        return None
-    return kind, badge_id
-
-
-def pack_status(badge_id, boot, seq, state, flight_ms, air_total_ms, air_at_reset_ms, drops, throws, steps,
-                still_ms, throw_ms, drop_ms, rssi, name):
-    body = struct.pack(
-        STATUS_BODY,
-        boot & 0xFF,
-        seq & 0xFFFF,
-        state & 0xFF,
-        min(flight_ms, 0xFFFF),
-        air_total_ms & 0xFFFFFFFF,
-        air_at_reset_ms & 0xFFFFFFFF,
-        drops & 0xFF,
-        throws & 0xFF,
-        steps & 0xFFFF,
-        still_ms & 0xFFFFFFFF,
-        throw_ms & 0xFFFFFFFF,
-        drop_ms & 0xFFFFFFFF,
-        max(-128, min(127, rssi)),
-    )
-    return _header(PKT_STATUS, badge_id) + body + name.encode()[:UDP_NAME_MAX]
-
-
-def unpack_status(data):
-    """Decode a PKT_STATUS datagram into a dict (with badge_id and name), else None."""
-    head = unpack_header(data)
-    if head is None or head[0] != PKT_STATUS or len(data) < STATUS_SIZE:
-        return None
-    out = dict(zip(STATUS_FIELDS, struct.unpack_from(STATUS_BODY, data, UDP_HEADER_SIZE)))
-    out["badge_id"] = head[1]
-    out["name"] = bytes(data[STATUS_SIZE:STATUS_SIZE + UDP_NAME_MAX]).decode("utf-8", "replace")
-    return out
-
-
-def pack_ack(badge_id):
-    return _header(PKT_ACK, badge_id)
-
-
-def pack_cmd(badge_id, op, arg=b""):
-    return _header(PKT_CMD, badge_id) + op + arg
-
-
-def pack_reply(badge_id, arg):
-    return _header(PKT_REPLY, badge_id) + arg
-
-
-def unpack_payload(data):
-    """Return (type, badge_id, payload bytes after the header), else None."""
-    head = unpack_header(data)
-    if head is None:
-        return None
-    return head[0], head[1], bytes(data[UDP_HEADER_SIZE:])

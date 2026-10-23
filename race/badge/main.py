@@ -4,7 +4,7 @@
 # Escape routes:
 # - Double-tap reset: USB mass storage (same as upstream badger/home main.py).
 # - USB serial: mpremote can interrupt the app at any time.
-# Restore the stock boot with `tools/deploy_badge.py restore`.
+# Restore the stock boot with `tools/deploy_race.py restore`.
 import os
 import powman
 

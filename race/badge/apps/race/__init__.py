@@ -9,7 +9,7 @@ and ping it. This build has no Bluetooth, so the recorder can't connect.
 The app shows the generated model's state (still / throw / drop) and has no
 exit: on a kiosk badge (`badge/main.py`) it is the only thing that runs.
 
-Deploy with `tools/deploy_badge.py`, which also copies `protocol.py` and
+Deploy with `tools/deploy_race.py`, which also copies `protocol.py` and
 `dist/model.py` from the action-trainer repository.
 """
 
@@ -89,7 +89,7 @@ WIFI_RETRY_MS = 10000
 WIFI_JOIN_TIMEOUT_MS = 20000
 SERVER_FORGET_MS = 10000  # no ack for this long: broadcast again
 IDENTIFY_MS = 1200  # Find on the leaderboard blinks the screen this long
-NET_CONFIG = "/state/airtime_net.json"  # {"ssid", "password", "server"}; written by deploy_badge.py
+NET_CONFIG = "/state/airtime_net.json"  # {"ssid", "password", "server"}; written by deploy_race.py
 
 state_store = {"name": ""}
 State.load("airtime", state_store)  # key kept from the old app name so saved names survive

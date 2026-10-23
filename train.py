@@ -1,16 +1,11 @@
-"""Train and export a small badge-compatible throw/drop model.
+"""Train and export a small badge-compatible decision tree.
 
 Example: python train.py --data data --output dist/model.py
-
-The export has two stages. A window model labels each second as still or
-throw (airborne). When a throw lands, a landing model scores the following
-second; the badge reports drop only when that score reaches the drop
-confidence, and otherwise assumes the throw was caught.
 """
 import argparse
 import csv
 import json
-import math
+import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -18,46 +13,22 @@ from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.model_selection import GroupKFold
 from sklearn.tree import DecisionTreeClassifier
 
-from features import AXIS_NAMES, FEATURE_NAMES, FREEFALL_G, LSB_PER_G, extract_features
+import features
+from features import AXIS_NAMES, extract_features
 
 LABELS = ("drop", "still", "throw", "unknown", "walk")
-STATES = ("still", "throw", "drop")
-DEFAULT_ACTION = "still"
+IGNORE = "ignore"
+# Free-form recordings: only tagged segments train; untagged time is ignored.
+RECORDINGS = "recordings"
 WINDOW_MS = 1000
 HOP_MS = 250
 MAX_DEPTH = 6
-# Throw/drop sessions include handling between takes. Only windows containing
-# free fall are airborne ("throw"); windows without any are still/held.
-AIRBORNE_LABELS = ("throw", "drop")
-MIN_AIRBORNE_MS = 150
-# Guided mixed sessions: the JSON sidecar lists timed prompt segments.
-MIXED = "mixed"
-GUIDED = (MIXED, "landings")  # recorder session types with prompt segments
-REACTION_MS = 1000
-
-# Landing stage. A flight ends once no free fall has been seen for
-# LANDING_DELAY_MS + LANDING_MS; the landing window is the LANDING_MS that
-# start LANDING_DELAY_MS after the last free-fall sample.
-LANDING_DELAY_MS = 0
-LANDING_MS = 500
-LANDING_DEPTH = 2
-LANDING_MIN_LEAF = 3
-# Leaf scores are shrunk toward "caught": drops / (leaf samples + prior).
-LANDING_PRIOR = 2
-DROP_CONFIDENCE = 0.85
-# Orientation-independent features only. gyro_mag_mean is excluded because it
-# includes the gyro's resting offset, which differs per badge.
-LANDING_FEATURE_NAMES = (
-    "accel_mag_mean",
-    "accel_mag_std",
-    "accel_mag_min",
-    "accel_mag_max",
-    "gyro_mag_std",
-    "gyro_axis_std",
-    "accel_axis_std",
-)
-LANDING_FEATURES = tuple(FEATURE_NAMES.index(name) for name in LANDING_FEATURE_NAMES)
-LANDING_LABELS = {"throw": "caught", "drop": "dropped"}
+# Back-to-back walk predictions needed before the badge counts steps; cuts
+# steps counted while waving or handling the badge.
+WALK_CONFIRM = 2
+SPLITS_FILE = "splits.json"
+# Every Nth recording (in time order) is held out as the fixed test set.
+TEST_EVERY = 4
 
 
 def read_session(path):
@@ -74,151 +45,143 @@ def read_session(path):
     return samples
 
 
-def is_freefall(axes):
-    ax, ay, az = axes[:3]
-    return math.sqrt(ax * ax + ay * ay + az * az) / LSB_PER_G < FREEFALL_G
+def read_segments(path):
+    """Annotated stretches from the session's JSON sidecar, if any."""
+    sidecar = path.with_suffix(".json")
+    if not sidecar.is_file():
+        return []
+    meta = json.loads(sidecar.read_text(encoding="utf-8"))
+    segments = []
+    for seg in meta.get("segments") or ():
+        label = str(seg["label"]).lower()
+        if label not in LABELS and label != IGNORE:
+            raise ValueError(f"{sidecar}: unknown segment label {label!r}")
+        segments.append((int(seg["start_ms"]), int(seg["end_ms"]), label))
+    return segments
 
 
-def airborne_spans(window):
-    return [(t_ms, t_next) for (t_ms, axes), (t_next, _) in zip(window, window[1:]) if is_freefall(axes)]
+def window_label(start, end, label, segments):
+    """Label for [start, end): the segment that wholly contains it, else the
+    session label. Windows that straddle a segment edge are ambiguous (None)."""
+    for seg_start, seg_end, seg_label in segments:
+        if seg_start <= start and end <= seg_end:
+            return None if seg_label == IGNORE else seg_label
+        if start < seg_end and seg_start < end:
+            return None
+    return label
 
 
-def airborne_ms(window):
-    """Milliseconds of free fall (|a| < FREEFALL_G) in a list of (t_ms, axes)."""
-    return sum(t_next - t_ms for t_ms, t_next in airborne_spans(window))
-
-
-def window_label(label, window):
-    """Window-stage label for a single-label session: throw (airborne) or still."""
-    if label not in AIRBORNE_LABELS:
-        return "still"
-    airborne = airborne_ms(window)
-    if airborne >= MIN_AIRBORNE_MS:
-        return "throw"
-    # A window that clips only the edge of a flight is ambiguous; skip it.
-    return "still" if airborne == 0 else None
-
-
-def prompt_at(segments, t_ms):
-    for seg in segments:
-        if seg["start_ms"] <= t_ms < seg["end_ms"]:
-            return seg["label"]
-    return None
-
-
-def mixed_window_label(window, segments):
-    """Window-stage label from a guided session's prompt segments.
-
-    Airborne windows are throws when free fall began under a throw or drop
-    prompt; free fall during other prompts (handling) is skipped. Grounded
-    windows are still.
-    """
-    spans = airborne_spans(window)
-    airborne = sum(end - start for start, end in spans)
-    if not airborne:
-        return "still"
-    if airborne < MIN_AIRBORNE_MS:
-        return None
-    return "throw" if prompt_at(segments, spans[0][0]) in AIRBORNE_LABELS else None
-
-
-def window_session(samples, labeler, group):
+def window_session(samples, label, group, segments=(), raw=None):
     if not samples:
         return [], [], []
     x, y, groups = [], [], []
     start = samples[0][0]
     end = samples[-1][0]
     while start + WINDOW_MS <= end:
-        window = [sample for sample in samples if start <= sample[0] < start + WINDOW_MS]
-        target = labeler(window) if len(window) >= 2 else None
-        if target is not None:
-            x.append(extract_features([axes for _, axes in window]))
+        target = window_label(start, start + WINDOW_MS, label, segments)
+        window = [axes for t_ms, axes in samples if start <= t_ms < start + WINDOW_MS] if target else []
+        if len(window) >= 2:
+            x.append(extract_features(window))
             y.append(target)
             groups.append(group)
+            if raw is not None:
+                raw.append(window)
         start += HOP_MS
     return x, y, groups
 
 
-def flights(samples):
-    """Group free fall into flights the way the badge does.
-
-    Returns (start_ms, last_freefall_ms, airborne_ms) per flight; free fall
-    separated by less than LANDING_DELAY_MS + LANDING_MS (bounces, juggles)
-    belongs to the same flight.
-    """
+def session_folders(data_dir):
+    """(folder, default label) pairs. Legacy per-label folders treat untagged
+    time as that label; the recordings folder ignores untagged time."""
+    if not data_dir.is_dir():
+        return []
     out = []
-    for (t_ms, axes), (t_next, _) in zip(samples, samples[1:]):
-        if not is_freefall(axes):
-            continue
-        if out and t_ms - out[-1][1] < LANDING_DELAY_MS + LANDING_MS:
-            out[-1][1] = t_ms
-            out[-1][2] += t_next - t_ms
-        else:
-            out.append([t_ms, t_ms, t_next - t_ms])
-    return [tuple(flight) for flight in out]
+    for label_dir in sorted(path for path in data_dir.iterdir() if path.is_dir()):
+        name = label_dir.name.lower()
+        if name in LABELS:
+            out.append((label_dir, name))
+        elif name == RECORDINGS:
+            out.append((label_dir, None))
+    return out
 
 
-def landing_window(samples, last_freefall):
-    start = last_freefall + LANDING_DELAY_MS
-    return [axes for t_ms, axes in samples if start <= t_ms < start + LANDING_MS]
+def label_seconds(data_dir):
+    """Seconds of training time per label, from the JSON sidecars."""
+    totals = Counter({label: 0.0 for label in LABELS})
+    for label_dir, default in session_folders(data_dir):
+        for path in label_dir.glob("*.csv"):
+            sidecar = path.with_suffix(".json")
+            meta = json.loads(sidecar.read_text(encoding="utf-8")) if sidecar.is_file() else {}
+            tagged = 0.0
+            for start, end, label in read_segments(path):
+                tagged += (end - start) / 1000
+                if label != IGNORE:
+                    totals[label] += (end - start) / 1000
+            if default:
+                totals[default] += max(0.0, float(meta.get("duration_s") or 0) - tagged)
+    return {label: round(totals[label], 1) for label in LABELS}
 
 
-def landing_session(samples, label_for_flight, group):
-    """Landing features and caught/dropped labels for one session's flights."""
+def load_dataset(data_dir, raw=None):
     x, y, groups = [], [], []
-    end = samples[-1][0] if samples else 0
-    for start, last_freefall, airborne in flights(samples):
-        if airborne < MIN_AIRBORNE_MS or last_freefall + LANDING_DELAY_MS + LANDING_MS > end:
-            continue
-        target = LANDING_LABELS.get(label_for_flight(start))
-        window = landing_window(samples, last_freefall)
-        if target is None or len(window) < 2:
-            continue
-        features = extract_features(window)
-        x.append([features[i] for i in LANDING_FEATURES])
-        y.append(target)
-        groups.append(group)
-    return x, y, groups
-
-
-def load_dataset(data_dir):
-    """Return window-stage and landing-stage datasets plus per-label counts."""
-    windows = ([], [], [])
-    landings = ([], [], [])
     sessions_by_label = defaultdict(int)
     samples_by_label = Counter()
-    for label_dir in sorted(path for path in data_dir.iterdir() if path.is_dir()):
-        label = label_dir.name.lower()
-        if label not in LABELS and label not in GUIDED:
-            continue
+    for label_dir, label in session_folders(data_dir):
         for path in sorted(label_dir.glob("*.csv")):
             samples = read_session(path)
-            group = path.parent.name + "/" + path.stem
-            if label in GUIDED:
-                segments = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))["segments"]
-                labeler = lambda window, segments=segments: mixed_window_label(window, segments)
-                flight_label = lambda t_ms, segments=segments: prompt_at(segments, t_ms)
-            else:
-                labeler = lambda window, label=label: window_label(label, window)
-                flight_label = lambda t_ms, label=label: label
-            sx, sy, sg = window_session(samples, labeler, group)
-            for dataset, part in ((windows, (sx, sy, sg)), (landings, landing_session(samples, flight_label, group))):
-                for column, values in zip(dataset, part):
-                    column.extend(values)
+            group = str(path.parent.name + "/" + path.stem)
+            sx, sy, sg = window_session(samples, label, group, read_segments(path), raw)
             if sx:
-                sessions_by_label[label] += 1
-                samples_by_label[label] += len(sx)
-    if not windows[0]:
+                x.extend(sx)
+                y.extend(sy)
+                groups.extend(sg)
+                for seen in set(sy):
+                    sessions_by_label[seen] += 1
+                samples_by_label.update(sy)
+    if not x:
         raise ValueError(f"No complete 1-second training windows found under {data_dir}")
-    return windows, landings, dict(sessions_by_label), dict(samples_by_label)
+    return x, y, groups, dict(sessions_by_label), dict(samples_by_label)
 
 
-def window_tree():
-    return DecisionTreeClassifier(max_depth=MAX_DEPTH, random_state=42)
+def assign_splits(data_dir, groups):
+    """Persisted train/test role per recording. New recordings are assigned in
+    time order and never move, so the test set stays a fixed yardstick."""
+    path = Path(data_dir) / SPLITS_FILE
+    splits = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    new = sorted(set(groups) - set(splits), key=lambda g: (g.rsplit("/", 1)[-1], g))
+    for group in new:
+        splits[group] = "test" if len(splits) % TEST_EVERY == TEST_EVERY - 1 else "train"
+    if new:
+        path.write_text(json.dumps(splits, indent=2, sort_keys=True), encoding="utf-8")
+    return splits
 
 
-def landing_tree():
-    return DecisionTreeClassifier(max_depth=LANDING_DEPTH, min_samples_leaf=LANDING_MIN_LEAF, random_state=42)
+def load_model_source(source):
+    scope = {"__name__": "badge_model"}
+    exec(compile(source, "model.py", "exec"), scope)
+    return scope["predict_window"]
+
+
+def score_model(source, windows, truths):
+    """Run the exported model on raw test windows, as the badge would."""
+    predict = load_model_source(source)
+    truths = ["still" if t == "unknown" else t for t in truths]
+    preds = [predict(w) for w in windows]
+    recall = {}
+    for label in ("walk", "still", "throw", "drop"):
+        hits = [p == label for t, p in zip(truths, preds) if t == label]
+        if hits:
+            recall[label] = sum(hits) / len(hits)
+    not_walk = [p != "walk" for t, p in zip(truths, preds) if t != "walk"]
+    if not_walk:
+        recall["not_walk"] = sum(not_walk) / len(not_walk)
+    return {
+        "windows": len(truths),
+        "accuracy": sum(t == p for t, p in zip(truths, preds)) / len(truths),
+        "recall": recall,
+        "fake_steps": 1 - recall["not_walk"] if "not_walk" in recall else None,
+        "missed_steps": 1 - recall["walk"] if "walk" in recall else None,
+    }
 
 
 def grouped_validation(x, y, groups):
@@ -246,7 +209,7 @@ def grouped_validation(x, y, groups):
                 "labels": label_list,
                 "confusion_matrix": None,
             }
-        model = window_tree()
+        model = DecisionTreeClassifier(max_depth=MAX_DEPTH, random_state=42)
         model.fit([x[i] for i in train_idx], [y[i] for i in train_idx])
         for i, prediction in zip(test_idx, model.predict([x[j] for j in test_idx])):
             predictions[i] = str(prediction)
@@ -260,70 +223,18 @@ def grouped_validation(x, y, groups):
     }
 
 
-def drop_scores(model, x):
-    """Shrunk leaf drop scores, matching the exported _landing()."""
+def tree_source(model):
     tree = model.tree_
-    dropped = list(model.classes_).index("dropped")
-    scores = []
-    for leaf in model.apply(x):
-        n = int(tree.n_node_samples[leaf])
-        drops = round(float(tree.value[leaf][0][dropped]) * n)
-        scores.append(drops / (n + LANDING_PRIOR))
-    return scores
-
-
-def landing_validation(x, y, groups, drop_confidence):
-    """Leave-one-session-out scores for every landing."""
-    if set(y) != {"caught", "dropped"}:
-        return {"status": "unavailable", "reason": "need caught and dropped landings"}
-    caught = dropped = false_drops = missed_drops = skipped = 0
-    majority_false = majority_missed = 0
-    for group in sorted(set(groups)):
-        train_idx = [i for i, g in enumerate(groups) if g != group]
-        test_idx = [i for i, g in enumerate(groups) if g == group]
-        if {y[i] for i in train_idx} != {"caught", "dropped"}:
-            skipped += len(test_idx)
-            continue
-        model = landing_tree()
-        model.fit([x[i] for i in train_idx], [y[i] for i in train_idx])
-        test_x = [x[i] for i in test_idx]
-        for i, score, majority in zip(test_idx, drop_scores(model, test_x), model.predict(test_x)):
-            is_drop = score >= drop_confidence
-            if y[i] == "dropped":
-                dropped += 1
-                missed_drops += not is_drop
-                majority_missed += majority != "dropped"
-            else:
-                caught += 1
-                false_drops += is_drop
-                majority_false += majority == "dropped"
-    return {
-        "status": "available",
-        "method": "leave one session out",
-        "caught_landings": caught,
-        "dropped_landings": dropped,
-        "false_drops": false_drops,
-        "missed_drops": missed_drops,
-        "skipped_landings": skipped,
-        # Held-out folds have fewer drops, so shrunk scores fall short of the
-        # confidence more often than with the full model; the tree's plain
-        # majority shows how separable the landings are.
-        "majority_false_drops": majority_false,
-        "majority_missed_drops": majority_missed,
-    }
-
-
-def tree_source(model, leaf, feature_index=None):
-    tree = model.tree_
+    classes = [str(value) for value in model.classes_]
 
     def emit(node, depth):
         indent = "    " * depth
         feature = tree.feature[node]
         if feature < 0:
-            return indent + "return " + repr(leaf(node))
-        index = feature_index[feature] if feature_index else feature
+            cls = classes[int(tree.value[node][0].argmax())]
+            return indent + "return " + repr(cls)
         lines = [
-            f"{indent}if features[{index}] <= {tree.threshold[node]:.17g}:",
+            f"{indent}if features[{feature}] <= {tree.threshold[node]:.17g}:",
             emit(tree.children_left[node], depth + 1),
             f"{indent}else:",
             emit(tree.children_right[node], depth + 1),
@@ -333,227 +244,99 @@ def tree_source(model, leaf, feature_index=None):
     return emit(0, 1)
 
 
-def window_source(model):
-    classes = [str(value) for value in model.classes_]
-    return tree_source(model, lambda node: classes[int(model.tree_.value[node][0].argmax())])
+def features_source():
+    """features.py minus its docstring and import, for embedding in model.py."""
+    text = Path(features.__file__).read_text(encoding="utf-8")
+    return re.sub(r'^""".*?"""\s*import math\s*', "", text, count=1, flags=re.S).strip()
 
 
-def landing_source(model):
-    if model is None:
-        return "    return 0.0"
-    tree = model.tree_
-    dropped = list(model.classes_).index("dropped")
-
-    def leaf(node):
-        n = int(tree.n_node_samples[node])
-        return round(round(float(tree.value[node][0][dropped]) * n) / (n + LANDING_PRIOR), 4)
-
-    return tree_source(model, leaf, LANDING_FEATURES)
-
-
-MODEL_TEMPLATE = '''"""Generated by Action Trainer; do not edit by hand.
-
-Tracker turns raw IMU samples into one of STATES at all times: still, throw
-(airborne), or drop (a throw that landed on the floor). Drop is reported only
-after a throw and only when the landing score reaches DROP_CONFIDENCE;
-otherwise the catch is assumed to have succeeded.
-"""
+def model_source(model):
+    return '''"""Generated by Action Trainer; do not edit by hand."""
 import math
 
-MODEL_VERSION = 2
-FEATURE_NAMES = %(feature_names)r
-LABELS = %(states)r
-STATES = LABELS
-DEFAULT_ACTION = %(default)r
-LSB_PER_G = 16384.0
-LSB_PER_DPS = 70.0
-FREEFALL_G = %(freefall_g)r
-WINDOW_MS = %(window_ms)r
-PREDICT_EVERY_MS = 100
-LANDING_DELAY_MS = %(landing_delay_ms)r
-LANDING_MS = %(landing_ms)r
-DROP_CONFIDENCE = %(drop_confidence)r
-# Leave drop once it has shown for DROP_HOLD_MS and the badge is picked up.
-DROP_HOLD_MS = 1500
-PICKUP_G = 0.2
-PICKUP_DPS = 40.0
+MODEL_VERSION = 3
+LABELS = ("still", "walk", "throw", "drop", "unknown")
+DEFAULT_ACTION = "still"
+# Walk only counts once this many back-to-back calls (one per hop) agree.
+WALK_CONFIRM = %d
+_walk_streak = 0
 
-
-def _mean_std(values):
-    n = len(values)
-    if not n:
-        return 0.0, 0.0
-    mean = sum(values) / n
-    variance = sum((value - mean) ** 2 for value in values) / n
-    return mean, math.sqrt(variance)
+%s
 
 
 def features_from_window(samples):
-    rows = [tuple(row[:6]) for row in samples if len(row) >= 6]
-    if not rows:
+    try:
+        return extract_features(samples)
+    except ValueError:
         return None
-    accel_mags = []
-    gyro_mags = []
-    for ax, ay, az, gx, gy, gz in rows:
-        accel_mags.append(math.sqrt(ax * ax + ay * ay + az * az) / LSB_PER_G)
-        gyro_mags.append(math.sqrt(gx * gx + gy * gy + gz * gz) / LSB_PER_DPS)
-    accel_mean, accel_std = _mean_std(accel_mags)
-    gyro_mean, gyro_std = _mean_std(gyro_mags)
-    axis_stds = tuple(_mean_std([row[i] for row in rows])[1] / (LSB_PER_G if i < 3 else LSB_PER_DPS) for i in range(6))
-    # MicroPython rejects starred expressions in tuple displays.
-    return (
-        accel_mean, accel_std, min(accel_mags), max(accel_mags),
-        gyro_mean, gyro_std,
-    ) + axis_stds + (
-        math.sqrt(sum(value * value for value in axis_stds[3:])),
-        math.sqrt(sum(value * value for value in axis_stds[:3])),
-    )
 
 
 def _classify(features):
-%(window_tree)s
-
-
-def _landing(features):
-%(landing_tree)s
+%s
 
 
 def predict_features(features):
     if not features:
         return DEFAULT_ACTION
     action = _classify(features)
-    return action if action in LABELS else DEFAULT_ACTION
+    return DEFAULT_ACTION if action == "unknown" else action
 
 
 def predict_window(samples):
-    """Classify one second of raw IMU samples as still or throw."""
-    return predict_features(features_from_window(samples))
+    """Classify six-axis raw IMU samples; unknown/empty windows default to Still.
+    Call once per hop: a lone walk window between other actions reads as Still."""
+    global _walk_streak
+    action = predict_features(features_from_window(samples))
+    if action != "walk":
+        _walk_streak = 0
+        return action
+    _walk_streak += 1
+    return action if _walk_streak >= WALK_CONFIRM else DEFAULT_ACTION
+''' % (WALK_CONFIRM, features_source(), tree_source(model))
 
 
-def drop_probability(samples):
-    """Score the second after a landing; higher means more likely on the floor."""
-    features = features_from_window(samples)
-    return _landing(features) if features else 0.0
-
-
-class Tracker:
-    """Feed (ticks_ms, (ax, ay, az, gx, gy, gz)) samples; read .state."""
-
-    def __init__(self):
-        self.state = DEFAULT_ACTION
-        self.since = 0
-        self.last_freefall = None
-        self.judged = None  # last free fall whose landing was already scored
-        self.drop_score = 0.0
-        self._samples = []
-        self._next_predict = 0
-
-    def update(self, now, sample):
-        samples = self._samples
-        samples.append((now, sample))
-        keep = max(WINDOW_MS, LANDING_DELAY_MS + LANDING_MS) + 100
-        stale = 0
-        while stale < len(samples) and now - samples[stale][0] > keep:
-            stale += 1
-        if stale:
-            del samples[:stale]
-
-        ax, ay, az, gx, gy, gz = sample[:6]
-        g = math.sqrt(ax * ax + ay * ay + az * az) / LSB_PER_G
-        if g < FREEFALL_G:
-            self.last_freefall = now
-
-        if self.state == "throw":
-            landed = self.last_freefall
-            if now - landed >= LANDING_DELAY_MS + LANDING_MS:
-                start = landed + LANDING_DELAY_MS
-                window = [s for t, s in samples if start <= t < start + LANDING_MS]
-                self.drop_score = drop_probability(window)
-                self.judged = landed
-                self._enter("drop" if self.drop_score >= DROP_CONFIDENCE else "still", now)
-            return self.state
-
-        if self.state == "drop" and now - self.since < DROP_HOLD_MS:
-            # Free fall right after a drop is the badge bouncing, not a throw.
-            self.judged = self.last_freefall
-            return self.state
-
-        if self.state == "drop" and now - self.since >= DROP_HOLD_MS:
-            dps = math.sqrt(gx * gx + gy * gy + gz * gz) / LSB_PER_DPS
-            if abs(g - 1.0) > PICKUP_G or dps > PICKUP_DPS:
-                self._enter("still", now)
-
-        if now >= self._next_predict:
-            self._next_predict = now + PREDICT_EVERY_MS
-            recent = (
-                self.last_freefall is not None
-                and self.last_freefall != self.judged
-                and now - self.last_freefall < WINDOW_MS
-            )
-            if recent and predict_window([s for t, s in samples if now - t < WINDOW_MS]) == "throw":
-                self._enter("throw", now)
-        return self.state
-
-    def _enter(self, state, now):
-        self.state = state
-        self.since = now
-'''
-
-
-def write_model(window_model, output, landing_model=None, drop_confidence=DROP_CONFIDENCE):
-    source = MODEL_TEMPLATE % {
-        "feature_names": tuple(FEATURE_NAMES),
-        "states": STATES,
-        "default": DEFAULT_ACTION,
-        "freefall_g": FREEFALL_G,
-        "window_ms": WINDOW_MS,
-        "landing_delay_ms": LANDING_DELAY_MS,
-        "landing_ms": LANDING_MS,
-        "drop_confidence": drop_confidence,
-        "window_tree": window_source(window_model),
-        "landing_tree": landing_source(landing_model),
-    }
+def write_model(model, output):
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(source, encoding="utf-8")
+    output.write_text(model_source(model), encoding="utf-8")
 
 
-def train(data_dir, output, drop_confidence=DROP_CONFIDENCE):
-    (x, y, groups), (lx, ly, lgroups), sessions, window_counts = load_dataset(data_dir)
-    model = window_tree()
-    model.fit(x, y)
-    landing_model = None
-    if set(ly) == {"caught", "dropped"}:
-        landing_model = landing_tree()
-        landing_model.fit(lx, ly)
-    write_model(model, output, landing_model, drop_confidence)
+def train(data_dir, output, baseline=None):
+    """Train on the train split and score on the fixed test split. `baseline`
+    is an older model.py to score on the same test windows for comparison."""
+    raw = []
+    x, y, groups, sessions, window_counts = load_dataset(data_dir, raw)
+    splits = assign_splits(data_dir, groups)
+    is_test = [splits.get(g) == "test" for g in groups]
+    train_idx = [i for i, t in enumerate(is_test) if not t] if not all(is_test) else list(range(len(y)))
+    test_idx = [i for i, t in enumerate(is_test) if t] if any(not t for t in is_test) else []
+    model = DecisionTreeClassifier(max_depth=MAX_DEPTH, random_state=42)
+    model.fit([x[i] for i in train_idx], [y[i] for i in train_idx])
+    validation = grouped_validation(x, y, groups)
+    write_model(model, output)
+    test = None
+    if test_idx:
+        windows = [raw[i] for i in test_idx]
+        truths = [y[i] for i in test_idx]
+        test = score_model(output.read_text(encoding="utf-8"), windows, truths)
+        test["recordings"] = sorted({groups[i] for i in test_idx})
+        if baseline is not None and Path(baseline).is_file():
+            try:
+                test["baseline"] = score_model(Path(baseline).read_text(encoding="utf-8"), windows, truths)
+            except Exception as error:  # an old model that can't run scores as absent
+                test["baseline_error"] = str(error)
     report = {
         "samples": len(x),
+        "train_windows": len(train_idx),
+        "test": test,
         "labels": dict(Counter(y)),
         "sessions": sessions,
         "windows_per_label": window_counts,
-        "states": list(STATES),
-        "airborne_rule": {
-            "labels": list(AIRBORNE_LABELS),
-            "freefall_g": FREEFALL_G,
-            "min_airborne_ms": MIN_AIRBORNE_MS,
-            "otherwise": "still when no free fall; skipped when partial",
-        },
         "max_depth": MAX_DEPTH,
         "actual_depth": model.get_depth(),
-        "grouped_validation": grouped_validation(x, y, groups),
-        "landing": {
-            "landings": dict(Counter(ly)),
-            "trained": landing_model is not None,
-            "delay_ms": LANDING_DELAY_MS,
-            "window_ms": LANDING_MS,
-            "features": list(LANDING_FEATURE_NAMES),
-            "max_depth": LANDING_DEPTH,
-            "prior": LANDING_PRIOR,
-            "drop_confidence": drop_confidence,
-            "validation": landing_validation(lx, ly, lgroups, drop_confidence),
-        },
+        "grouped_validation": validation,
         "model": str(output),
-        "default_action": DEFAULT_ACTION,
+        "default_action": "still",
+        "unknown_prediction": "mapped to still",
     }
     report_path = output.with_name("report.json")
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -564,29 +347,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--data", type=Path, default=Path("data"))
     parser.add_argument("--output", type=Path, default=Path("dist/model.py"))
-    parser.add_argument(
-        "--drop-confidence",
-        type=float,
-        default=DROP_CONFIDENCE,
-        help="landing score needed to report drop instead of a catch (default: %(default)s)",
-    )
     args = parser.parse_args()
-    report = train(args.data, args.output, args.drop_confidence)
-    print(f"Trained {report['samples']} windows; depth {report['actual_depth']}.")
+    report = train(args.data, args.output)
+    print(f"Trained {report['train_windows']} windows; depth {report['actual_depth']}.")
+    test = report["test"]
+    if test:
+        print(f"Test set ({len(test['recordings'])} recordings, {test['windows']} windows): "
+              f"accuracy {test['accuracy']:.3f}")
+        for label, value in test["recall"].items():
+            print(f"  {label:9} {value:.0%}")
     validation = report["grouped_validation"]
     if validation["status"] == "available":
         print(f"Grouped validation accuracy: {validation['accuracy']:.3f}")
     else:
         print(f"Grouped validation unavailable: {validation['reason']}")
-    landing = report["landing"]
-    print(f"Landings: {landing['landings']}")
-    lv = landing["validation"]
-    if lv["status"] == "available":
-        print(
-            f"Landing validation ({lv['method']}): {lv['false_drops']}/{lv['caught_landings']} false drops, "
-            f"{lv['missed_drops']}/{lv['dropped_landings']} missed drops at confidence "
-            f"(majority: {lv['majority_false_drops']} false, {lv['majority_missed_drops']} missed)"
-        )
     print(f"Model: {args.output}")
     print(f"Report: {args.output.with_name('report.json')}")
 

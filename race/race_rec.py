@@ -33,7 +33,7 @@ from protocol import (
     unpack_mfg,
     unpack_samples,
 )
-from features import FREEFALL_G
+from race_features import FREEFALL_G
 
 DATA_DIR = ROOT / "data"
 WEB_DIR = ROOT / "web"

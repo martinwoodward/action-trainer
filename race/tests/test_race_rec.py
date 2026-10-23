@@ -7,7 +7,7 @@ from unittest import mock
 
 import protocol
 import race_rec
-from train import train
+from race_train import train
 
 SCRIPT = [("still", 4000), ("hold", 3000), ("throw", None), ("hold", 3000), ("drop", None), ("still", 4000)]
 
