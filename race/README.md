@@ -20,18 +20,23 @@ Set up the virtual environment from the repository root (see the root
 cd race
 ```
 
-To start both Race web servers and open their pages from the repository root:
+To start the Race leaderboard alongside the Action Trainer recorder and open
+their pages from the repository root:
 
 ```powershell
 .\start-race.ps1
 ```
 
 The launcher creates the root `.venv` if needed (Python 3.11 or newer must
-be on PATH) and installs missing web server dependencies. It starts each server
-in a separate console window and reuses an already-running Race server. Leave the consoles open;
+be on PATH) and installs missing dependencies from the root `requirements.txt`.
+It starts each server in its own working directory and a separate console window,
+and reuses an already-running matching server. Leave the consoles open;
 press Ctrl+C in each to stop it. The leaderboard is at `http://localhost:8766`
-and the recorder is at `http://localhost:8765`. For these two servers alone,
-the required packages are `aiohttp` and `bleak`.
+and Action Trainer is at `http://localhost:8765`, with guided recording and
+BLE Train & deploy. This is the root `recorder.py`, not `race_rec.py`;
+it records and trains Airtime models using the root `data/` and `dist/`.
+Stop any Race recorder already using port 8765 before launching it.
+For Race-specific recording and training, use the commands below instead.
 
 ## Record
 

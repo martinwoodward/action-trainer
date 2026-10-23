@@ -13,10 +13,10 @@ if (-not (Test-Path -LiteralPath $python)) {
     }
 }
 
-& $python -c 'import aiohttp; import bleak'
+& $python -c 'import aiohttp; import bleak; import numpy; import sklearn'
 if ($LASTEXITCODE -ne 0) {
     Write-Host 'Installing web server dependencies...'
-    & $python -m pip install 'aiohttp>=3.9' 'bleak>=0.22'
+    & $python -m pip install -r (Join-Path $PSScriptRoot 'requirements.txt')
     if ($LASTEXITCODE -ne 0) {
         throw 'Could not install the web server dependencies. Check the pip output above and try again.'
     }
@@ -36,14 +36,14 @@ function Test-RacePage {
         return $false
     }
     if ($response.Content -notmatch [regex]::Escape("<title>$Title</title>")) {
-        throw "Another service is responding at $Url; stop it before starting Race."
+        throw "Another service is responding at $Url; stop it before starting $Title."
     }
     return $true
 }
 
 $servers = @(
-    @{ Script = 'leaderboard.py'; Port = 8766; Title = 'Air-time leaderboard' }
-    @{ Script = 'race_rec.py'; Port = 8765; Title = 'Air-time recorder' }
+    @{ Script = 'leaderboard.py'; Directory = $race; Port = 8766; Title = 'Air-time leaderboard' }
+    @{ Script = 'recorder.py'; Directory = $PSScriptRoot; Port = 8765; Title = "Action Trainer $([char]0x00B7) Badger" }
 )
 
 foreach ($server in $servers) {
@@ -54,7 +54,7 @@ foreach ($server in $servers) {
     else {
         $process = Start-Process -FilePath $python `
             -ArgumentList @('-u', $server.Script, '--no-browser') `
-            -WorkingDirectory $race -PassThru
+            -WorkingDirectory $server.Directory -PassThru
         $deadline = (Get-Date).AddSeconds(30)
         while (-not (Test-RacePage -Url $url -Title $server.Title)) {
             $process.Refresh()
