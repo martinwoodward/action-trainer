@@ -6,12 +6,20 @@ $python = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
 $race = Join-Path $PSScriptRoot 'race'
 
 if (-not (Test-Path -LiteralPath $python)) {
-    throw 'Create the virtual environment first: python -m venv .venv'
+    Write-Host 'Creating .venv...'
+    & python -m venv (Join-Path $PSScriptRoot '.venv')
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $python)) {
+        throw 'Could not create .venv. Install Python 3.11 or newer and make sure python is available on PATH.'
+    }
 }
 
 & $python -c 'import aiohttp; import bleak'
 if ($LASTEXITCODE -ne 0) {
-    throw 'Install the web server dependencies first: .\.venv\Scripts\python.exe -m pip install "aiohttp>=3.9" "bleak>=0.22"'
+    Write-Host 'Installing web server dependencies...'
+    & $python -m pip install 'aiohttp>=3.9' 'bleak>=0.22'
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Could not install the web server dependencies. Check the pip output above and try again.'
+    }
 }
 
 function Test-RacePage {
