@@ -2,194 +2,588 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Air-time recorder</title>
+<title>Action Trainer · Badger</title>
+<link rel="icon" href="https://badger.github.io/favicon.svg">
+<script>
+  (() => { const t = localStorage.getItem("theme") || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+    if (t === "light") document.documentElement.classList.add("light"); })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mona+Sans:wdth,wght@75..125,400..800&display=swap">
 <style>
-  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3; --dim:#8b949e; --accent:#2f81f7; --rec:#f85149; --ok:#3fb950; }
+  /* Theme tokens from badger.github.io. */
+  :root {
+    --bg:#050506; --panel:#111312; --inset:#0a0c0b; --control:#131614; --control-hover:#1a1e1b;
+    --line:#353b37; --text:#f5f5f5; --dim:#98a39b; --accent:#5fed83; --accent-hover:#7ff19b; --accent-fg:#050506;
+    --accent-soft:rgba(95,237,131,.5); --accent-glow:rgba(95,237,131,.6);
+    --rec:#e9465a; --danger-bg:rgba(233,70,90,.12); --danger-bg-hover:rgba(233,70,90,.2); --danger-fg:#ff8a98;
+    --header-bg:rgba(5,5,6,.9); --header-line:rgba(53,59,55,.8);
+    --page-glow:rgba(95,237,131,.07); --page-sheen:rgba(255,255,255,.015); --grid-dot:rgba(95,237,131,.24);
+    --shadow:0 14px 40px rgba(0,0,0,.18);
+    --plot-grid:#252a27; --plot-sel:rgba(95,237,131,.14); --plot-band:.12;
+    --radius:.7rem;
+    --sans:"Mona Sans", system-ui, sans-serif; --mono:"Monaspace Neon", ui-monospace, "SF Mono", Menlo, monospace;
+    color-scheme:dark;
+  }
+  :root.light {
+    --bg:#f2f5f3; --panel:#ffffff; --inset:#fafcfb; --control:#ffffff; --control-hover:#ebefec;
+    --line:#cdd5d0; --text:#101411; --dim:#585f5a; --accent:#067a27; --accent-hover:#05651f; --accent-fg:#ffffff;
+    --accent-soft:rgba(6,122,39,.45); --accent-glow:rgba(6,122,39,.35);
+    --rec:#ce222d; --danger-bg:#fdf2f3; --danger-bg-hover:#fbe4e6; --danger-fg:#ce222d;
+    --header-bg:rgba(242,245,243,.88); --header-line:#cdd5d0;
+    --page-glow:rgba(15,191,62,.09); --page-sheen:rgba(255,255,255,.7); --grid-dot:rgba(8,135,43,.2);
+    --shadow:0 1px 2px rgba(16,20,17,.04), 0 10px 30px rgba(16,20,17,.06);
+    --plot-grid:#e1e7e3; --plot-sel:rgba(6,122,39,.1); --plot-band:.16;
+    color-scheme:light;
+  }
   * { box-sizing: border-box; }
-  body { margin:0; font:15px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--text); }
-  header { padding:12px 20px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:center; }
-  header h1 { font-size:18px; margin:0; }
-  #conn { color:var(--dim); }
-  main { display:grid; grid-template-columns: 320px 1fr; gap:16px; padding:16px 20px; }
-  section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; margin-bottom:16px; }
-  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); margin:0 0 10px; }
-  button { font:inherit; color:var(--text); background:#21262d; border:1px solid var(--line); border-radius:6px; padding:6px 12px; cursor:pointer; }
-  button:hover:not(:disabled) { border-color:var(--dim); }
+  body { margin:0; font:15px/1.5 var(--sans); background:var(--bg); color:var(--text); -webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(circle at 78% 0%, var(--page-glow), transparent 26rem), linear-gradient(180deg, var(--page-sheen), transparent 26rem);
+    background-attachment:fixed; min-height:100vh; }
+  body::before { content:""; position:fixed; inset:0 0 auto 0; height:420px; pointer-events:none; z-index:-1;
+    background-image:radial-gradient(circle, var(--grid-dot) 1px, transparent 1px); background-size:22px 22px;
+    -webkit-mask-image:linear-gradient(180deg, black, transparent 82%); mask-image:linear-gradient(180deg, black, transparent 82%); }
+  header { position:sticky; top:0; z-index:5; height:4.5rem; padding:0 24px; border-bottom:1px solid var(--header-line);
+    background:var(--header-bg); backdrop-filter:blur(24px); display:flex; gap:12px; align-items:center; }
+  header img { width:36px; height:36px; }
+  header h1 { font-size:24px; font-weight:600; letter-spacing:-.02em; margin:0; font-stretch:87.5%; }
+  #conn { margin-left:auto; font:500 11px/1 var(--mono); text-transform:uppercase; letter-spacing:.14em; color:var(--dim); }
+  #conn:empty + * { margin-left:auto; }
+  .icon { padding:0; width:36px; height:36px; display:grid; place-items:center; color:var(--dim); position:relative; }
+  .icon svg { width:18px; height:18px; }
+  #logbtn.alert::after { content:""; position:absolute; top:7px; right:7px; width:7px; height:7px; border-radius:50%; background:var(--rec); }
+  .pop { position:absolute; z-index:10; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    box-shadow:0 18px 50px rgba(0,0,0,.28); padding:14px; }
+  #logpop { position:fixed; top:4.9rem; right:24px; width:min(460px, calc(100vw - 48px)); }
+  #settingspop { position:fixed; top:4.9rem; right:24px; width:min(340px, calc(100vw - 48px)); }
+  #settingspop label { display:block; font-size:13px; color:var(--dim); margin-bottom:6px; }
+  .setrow { display:flex; gap:8px; }
+  #settingspop label.check { display:flex; gap:8px; align-items:center; color:var(--text); font-size:14px; margin:16px 0 4px; cursor:pointer; }
+  #settingspop .check input { accent-color:var(--accent); width:16px; height:16px; margin:0; }
+  #settingspop .hint { margin:0; font-size:12px; }
+  select { flex:1; min-width:0; font:inherit; font-size:14px; color:var(--text); background:var(--inset); border:1px solid var(--line);
+    border-radius:calc(var(--radius) - 2px); padding:7px 10px; }
+  select:focus { outline:none; border-color:var(--accent); }
+  #theme .sun, :root.light #theme .moon { display:none; }
+  :root.light #theme .sun { display:block; }
+  main { display:grid; grid-template-columns: minmax(0, 1fr) 320px; gap:20px; padding:24px; max-width:1400px; margin:0 auto; align-items:start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:18px; margin-bottom:20px;
+    box-shadow:var(--shadow); }
+  h2 { font:500 11px/1 var(--mono); text-transform:uppercase; letter-spacing:.14em; color:var(--dim); margin:0 0 14px; }
+  button { font:500 14px/1.2 var(--sans); color:var(--text); background:var(--control); border:1px solid var(--line);
+    border-radius:calc(var(--radius) - 2px); padding:8px 14px; cursor:pointer; transition:border-color .15s, background .15s, color .15s; }
+  button:hover:not(:disabled) { border-color:var(--accent-soft); background:var(--control-hover); }
+  button:active:not(:disabled) { transform:translateY(1px); }
+  button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   button:disabled { opacity:.45; cursor:default; }
-  button.primary { background:var(--accent); border-color:var(--accent); }
-  button.danger { background:var(--rec); border-color:var(--rec); }
-  input[type=text], input[type=number] { font:inherit; color:var(--text); background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:5px 8px; }
-  .badge { display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-top:1px solid var(--line); gap:8px; }
-  .badge:first-child { border-top:0; }
-  .badge small { color:var(--dim); display:block; }
-  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px; }
-  .labels { display:grid; grid-template-columns:repeat(5, 1fr); gap:8px; }
-  .labels button { padding:12px 6px; text-transform:capitalize; }
-  .labels button.sel { outline:2px solid var(--accent); }
-  .labels button span { display:block; font-size:12px; color:var(--dim); }
-  #guide { color:var(--dim); margin:10px 0 0; min-height:2.8em; }
-  #big { font-size:42px; font-weight:700; font-variant-numeric:tabular-nums; }
-  #bigsub { color:var(--dim); }
-  canvas { width:100%; height:260px; background:var(--bg); border-radius:6px; display:block; }
-  .legend { display:flex; gap:12px; font-size:12px; color:var(--dim); margin-top:6px; }
-  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
-  #pending table { border-collapse:collapse; margin-bottom:10px; }
-  #pending td { padding:2px 12px 2px 0; }
-  #log { color:var(--dim); font-size:13px; max-height:120px; overflow:auto; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-fg); font-weight:600; }
+  button.primary:hover:not(:disabled) { background:var(--accent-hover); border-color:var(--accent-hover); }
+  button.danger { background:var(--danger-bg); border-color:var(--rec); color:var(--danger-fg); }
+  button.danger:hover:not(:disabled) { background:var(--danger-bg-hover); border-color:var(--rec); }
+  input[type=text], input[type=number] { font:inherit; color:var(--text); background:var(--inset); border:1px solid var(--line);
+    border-radius:calc(var(--radius) - 2px); padding:7px 10px; }
+  input:focus { outline:none; border-color:var(--accent); }
+  .badge { display:flex; justify-content:space-between; align-items:center; padding:8px 0; gap:8px; }
+  .badge small, .sub { color:var(--dim); font:12px/1.4 var(--mono); }
+  .badge.me { padding-top:0; }
+  #badges .row + .badge { border-top:1px solid var(--line); margin-top:8px; padding-top:12px; }
+  .badge .acts { display:flex; gap:4px; align-items:center; flex:none; }
+  .ibtn { padding:0; width:28px; height:28px; display:grid; place-items:center; color:var(--dim); background:none; border-color:transparent; }
+  .ibtn svg { width:18px; height:18px; fill:currentColor; }
+  .ibtn:hover:not(:disabled) { color:var(--text); }
+  #hiddenbadges { margin-top:8px; border-top:1px solid var(--line); padding-top:8px; }
+  #hiddenbadges summary { cursor:pointer; color:var(--dim); font:12px/1.4 var(--mono); padding:4px 0; list-style:none;
+    display:flex; justify-content:center; align-items:center; }
+  #hiddenbadges summary::-webkit-details-marker { display:none; }
+  #hiddenbadges summary svg { width:18px; height:18px; fill:currentColor; transition:transform .15s; }
+  #hiddenbadges[open] summary svg { transform:rotate(180deg); }
+  #hiddenbadges summary:hover { color:var(--text); }
+  #hiddenbadges .badge { opacity:.7; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--line); flex:none; }
+  .dot.on { background:var(--accent); box-shadow:0 0 10px var(--accent-glow); }
+  .dot.wait { background:#f2cc60; animation:pulse 1s infinite alternate; }
+  @keyframes pulse { to { opacity:.3; } }
+  .who { display:flex; gap:10px; align-items:center; min-width:0; }
+  .name { background:none; border:0; padding:2px 4px; margin-left:-4px; font-weight:600; font-size:16px; display:inline-flex; gap:6px; align-items:center; }
+  .name svg { width:13px; height:13px; color:var(--dim); opacity:0; transition:opacity .15s; }
+  .name:hover svg, .name:focus-visible svg { opacity:1; }
+  .name:hover:not(:disabled) { background:var(--control-hover); }
+  button.small { padding:5px 10px; font-size:13px; }
+  .ghost { background:none; }
+  [hidden] { display:none !important; }
+  #renamepop { width:260px; display:flex; gap:8px; }
+  #renamepop input { flex:1; min-width:0; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px; }
+  #overall { display:flex; align-items:baseline; gap:10px; }
+  #overall b { font-size:40px; font-weight:700; letter-spacing:-.03em; font-stretch:87.5%; font-variant-numeric:tabular-nums; }
+  .delta { font:600 13px var(--mono); }
+  .delta.up { color:var(--accent); } .delta.down { color:var(--danger-fg); }
+  .bars { display:grid; gap:10px; margin:14px 0 16px; }
+  .bar { display:grid; grid-template-columns:1fr auto; gap:4px 10px; font-size:13px; }
+  .bar span:nth-child(2) { font:600 13px var(--mono); font-variant-numeric:tabular-nums; }
+  .bar .track { grid-column:1 / -1; height:6px; border-radius:3px; background:var(--inset); border:1px solid var(--line); overflow:hidden; }
+  .bar .track i { display:block; height:100%; border-radius:3px; }
+  #kept { background:var(--danger-bg); border-radius:calc(var(--radius) - 2px); padding:10px 12px; font-size:13px; margin-bottom:12px; }
+  #kept button { margin-top:8px; }
+  .wide { width:100%; padding:11px 14px; }
+  .promptrow { display:flex; gap:16px; align-items:flex-start; justify-content:space-between; }
+  #guides { display:grid; grid-template-columns:repeat(3, 1fr); gap:12px; margin-top:20px; }
+  .tile { text-align:left; padding:16px 18px; display:grid; gap:4px; }
+  .tile b { font-size:18px; display:flex; align-items:center; gap:10px; }
+  .tile b i { width:12px; height:12px; border-radius:4px; }
+  .tile span { color:var(--dim); font-size:13px; }
+  #phasebar { height:8px; background:var(--inset); border-radius:4px; margin:18px 0 4px; overflow:hidden; }
+  #phasebar i { display:block; height:100%; width:0; background:var(--accent); box-shadow:0 0 12px var(--accent-glow); }
+  #big { font-size:56px; line-height:1.1; font-weight:700; letter-spacing:-.03em; font-stretch:87.5%; font-variant-numeric:tabular-nums; }
+  #bigsub { color:var(--dim); font-size:16px; margin-top:4px; }
+  #plot { height:340px; }
+  canvas { width:100%; height:260px; background:var(--inset); border:1px solid var(--line); border-radius:calc(var(--radius) - 2px); display:block; }
+  .legend { display:flex; gap:14px; flex-wrap:wrap; font:11px/1 var(--mono); color:var(--dim); margin-top:10px; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
+  #pending table { border-collapse:collapse; margin-bottom:10px; font-family:var(--mono); font-size:13px; }
+  #pending td { padding:3px 14px 3px 0; }
+  #log { color:var(--dim); font:12px/1.6 var(--mono); max-height:50vh; overflow:auto; }
   .err { color:var(--rec); }
-  .state { font-weight:600; }
+  .state { font-weight:600; color:var(--accent); }
+  .hint { color:var(--dim); font-size:13px; margin:0 0 10px; }
+  #annolabels button { text-transform:capitalize; }
+  #annolabels button i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:-1px; }
+  #annolabels kbd { color:var(--dim); font:11px var(--mono); margin-left:6px; }
+  #segs { font-size:13px; margin-top:10px; }
+  #segs div { display:flex; gap:10px; align-items:center; padding:3px 0; font-family:var(--mono); }
+  #segs i { display:inline-block; width:10px; height:10px; border-radius:3px; }
+  #segs button { padding:2px 8px; font-size:12px; }
 </style>
 </head>
 <body>
-<header><h1>Air-time recorder</h1><span id="conn">connecting to backend…</span></header>
+<header><img src="https://badger.github.io/favicon.svg" alt=""><h1>Action Trainer</h1><span id="conn">connecting to backend…</span><button id="logbtn" class="icon ghost" title="Log" aria-label="Log"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></button><button id="theme" class="icon ghost" title="Toggle light/dark" aria-label="Toggle light/dark"><svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg><svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button><button id="settingsbtn" class="icon ghost" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8M12,10A2,2 0 0,0 10,12A2,2 0 0,0 12,14A2,2 0 0,0 14,12A2,2 0 0,0 12,10M10,22C9.75,22 9.54,21.82 9.5,21.58L9.13,18.93C8.5,18.68 7.96,18.34 7.44,17.94L4.95,18.95C4.73,19.03 4.46,18.95 4.34,18.73L2.34,15.27C2.21,15.05 2.27,14.78 2.46,14.63L4.57,12.97L4.5,12L4.57,11L2.46,9.37C2.27,9.22 2.21,8.95 2.34,8.73L4.34,5.27C4.46,5.05 4.73,4.96 4.95,5.05L7.44,6.05C7.96,5.66 8.5,5.32 9.13,5.07L9.5,2.42C9.54,2.18 9.75,2 10,2H14C14.25,2 14.46,2.18 14.5,2.42L14.87,5.07C15.5,5.32 16.04,5.66 16.56,6.05L19.05,5.05C19.27,4.96 19.54,5.05 19.66,5.27L21.66,8.73C21.79,8.95 21.73,9.22 21.54,9.37L19.43,11L19.5,12L19.43,13L21.54,14.63C21.73,14.78 21.79,15.05 21.66,15.27L19.66,18.73C19.54,18.95 19.27,19.04 19.05,18.95L16.56,17.95C16.04,18.34 15.5,18.68 14.87,18.93L14.5,21.58C14.46,21.82 14.25,22 14,22H10M11.25,4L10.88,6.61C9.68,6.86 8.62,7.5 7.85,8.39L5.44,7.35L4.69,8.65L6.8,10.2C6.4,11.37 6.4,12.64 6.8,13.8L4.68,15.36L5.43,16.66L7.86,15.62C8.63,16.5 9.68,17.14 10.87,17.38L11.24,20H12.76L13.13,17.39C14.32,17.14 15.37,16.5 16.14,15.62L18.57,16.66L19.32,15.36L17.2,13.81C17.6,12.64 17.6,11.37 17.2,10.2L19.31,8.65L18.56,7.35L16.15,8.39C15.38,7.5 14.32,6.86 13.12,6.62L12.75,4H11.25Z"/></svg></button></header>
+<div id="logpop" class="pop" hidden><h2>Log</h2><div id="log"></div></div>
+<div id="settingspop" class="pop" hidden><h2>Settings</h2>
+  <label for="voice">Voice</label>
+  <div class="setrow"><select id="voice"></select><button id="voicetest">Test</button></div>
+  <label class="check"><input type="checkbox" id="hidemodel"> Hide the model (demo)</label>
+  <p class="hint">Shows "no model" here and on the badge until the next Train &amp; deploy. The model stays on the badge.</p>
+</div>
+<div id="renamepop" class="pop" hidden><input id="newname" type="text" maxlength="16" placeholder="Badge name"><button id="rename" class="primary">Save</button></div>
 <main>
   <div>
     <section>
-      <h2>Badges</h2>
-      <div id="badges"><small style="color:var(--dim)">Scanning… start the airtime app on a badge.</small></div>
-    </section>
-    <section id="connected" hidden>
-      <h2>Connected badge</h2>
-      <div id="info" style="color:var(--dim);font-size:13px;word-break:break-all"></div>
-      <div class="row">
-        <button id="identify">Identify</button>
-        <button id="disconnect">Disconnect</button>
-      </div>
-      <div class="row">
-        <input id="newname" type="text" maxlength="16" placeholder="New name" style="flex:1">
-        <button id="rename">Rename</button>
-      </div>
-    </section>
-    <section>
-      <h2>Log</h2>
-      <div id="log"></div>
-    </section>
-  </div>
-  <div>
-    <section>
-      <h2>Action</h2>
-      <div class="labels" id="labels"></div>
-      <p id="guide"></p>
-      <div class="row">
-        <label>Takes <input id="takes" type="number" min="1" max="50" value="10" style="width:64px"></label>
-        <label>Seconds <input id="seconds" type="number" min="5" max="600" value="60" style="width:72px"></label>
-        <label><input id="plushy" type="checkbox" checked> In plushy</label>
-        <input id="notes" type="text" placeholder="Notes (surface, who, etc.)" style="flex:1">
-      </div>
-    </section>
-    <section>
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:16px">
-        <div><div id="big">—</div><div id="bigsub">Connect a badge, pick an action, press Start.</div></div>
-        <div class="row" style="margin:0">
-          <button id="mark" title="Space">Mark take (Space)</button>
-          <button id="startstop" class="primary" disabled>Start</button>
+      <div class="promptrow">
+        <div><div id="big">—</div><div id="bigsub">Connect a badge to start.</div></div>
+        <div class="row" style="margin:6px 0 0;flex-wrap:nowrap">
+          <button id="startstop" class="small ghost" disabled>Free record</button>
+          <button id="cancel" class="danger" hidden>Cancel</button>
         </div>
       </div>
-      <div style="margin-top:12px"><canvas id="plot"></canvas></div>
+      <div id="phasebar" hidden><i></i></div>
+      <div id="guides"></div>
+      <div style="margin-top:20px"><canvas id="plot"></canvas></div>
       <div class="legend" id="legend"></div>
     </section>
     <section id="pending" hidden>
       <h2>Review recording</h2>
       <table id="summary"></table>
+      <p class="hint" id="annohint"></p>
+      <canvas id="review" style="height:220px;cursor:crosshair"></canvas>
+      <div class="row" id="annolabels"></div>
+      <div id="segs"></div>
       <div class="row"><button id="save" class="primary">Save</button><button id="discard">Discard</button></div>
+    </section>
+  </div>
+  <div>
+    <section>
+      <h2>Badge</h2>
+      <div id="badges"><span class="sub">Scanning for badges…</span></div>
+    </section>
+    <section>
+      <h2>Model on badge</h2>
+      <div id="score"></div>
+      <div id="kept" hidden></div>
+      <button id="traindeploy" class="primary wide" disabled>Train &amp; deploy</button>
+      <div id="modelstatus" class="sub" style="margin-top:8px;text-align:center"></div>
     </section>
   </div>
 </main>
 <script>
-const GUIDE = {
-  throw: "Throw it up and catch it, 10 times. Hold it still in your hand for ~2 s between throws. The counter ticks on each detected flight.",
-  drop: "Drop it onto the floor 10 times. Leave it on the floor ~2 s, pick it up, hold still ~2 s, repeat.",
-  still: "Put the badge down and don't touch it. Try a few surfaces across sessions (table, floor, chair).",
-  walk: "Wear it on the lanyard (in the plushy if that's the stage setup) and walk normally.",
-  unknown: "Handle it without throwing or dropping: pick up, wave, shake, twist, pass between hands, put in a pocket.",
+let theme = {};
+function readTheme() {
+  const cs = getComputedStyle(document.documentElement), v = n => cs.getPropertyValue(n).trim();
+  theme = {grid: v("--plot-grid"), dim: v("--dim"), text: v("--text"), accent: v("--accent"), inset: v("--inset"), sel: v("--plot-sel"), band: +v("--plot-band") || 0.12};
+}
+readTheme();
+function setTheme(light) {
+  document.documentElement.classList.toggle("light", light);
+  readTheme();
+  if (typeof renderReview === "function") renderReview();
+}
+document.getElementById("theme").onclick = () => {
+  const light = !document.documentElement.classList.contains("light");
+  localStorage.setItem("theme", light ? "light" : "dark");
+  setTheme(light);
 };
-const TIMED = new Set(["still", "walk", "unknown"]);
-const STATE_COLOURS = ["#1e46c8", "#1e963c", "#e6c814", "#f07814", "#d21e1e", "#5a5a64"];
+matchMedia("(prefers-color-scheme: light)").addEventListener("change", e => { if (!localStorage.getItem("theme")) setTheme(e.matches); });
+const STATE_COLOURS = ["#58a6ff", "#5fed83", "#f2cc60", "#f0883e", "#e9465a", "#4a524c"];
 const STATE_NAMES = ["Still", "Walk", "Flying", "Throw", "Drop", "Handling"];
 const WINDOW_MS = 10000;
 
-let ws, status = null, label = "throw", samples = [];
+let ws, status = null, samples = [];
 const $ = id => document.getElementById(id);
 const send = msg => ws && ws.readyState === 1 && ws.send(JSON.stringify(msg));
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
-const log = (text, cls) => { const d = document.createElement("div"); d.textContent = new Date().toLocaleTimeString() + "  " + text; if (cls) d.className = cls; $("log").prepend(d); };
+const log = (text, cls) => {
+  const d = document.createElement("div"); d.textContent = new Date().toLocaleTimeString() + "  " + text;
+  if (cls) d.className = cls;
+  $("log").prepend(d);
+  if (cls === "err" && $("logpop").hidden) $("logbtn").classList.add("alert");
+};
+function togglePop(pop, anchor) {
+  const open = pop.hidden;
+  for (const p of document.querySelectorAll(".pop")) p.hidden = true;
+  if (!open) return false;
+  pop.hidden = false;
+  if (anchor) {
+    const r = anchor.getBoundingClientRect();
+    pop.style.left = Math.min(r.left + scrollX, innerWidth - pop.offsetWidth - 16) + "px";
+    pop.style.top = r.bottom + scrollY + 6 + "px";
+  }
+  return true;
+}
+document.addEventListener("mousedown", e => {
+  if (!e.target.closest(".pop, #logbtn, #settingsbtn, .name")) for (const p of document.querySelectorAll(".pop")) p.hidden = true;
+});
+$("logbtn").onclick = () => { togglePop($("logpop")); $("logbtn").classList.remove("alert"); };
+$("settingsbtn").onclick = () => togglePop($("settingspop"));
 
 $("legend").innerHTML = STATE_NAMES.map((n, i) => `<span><i style="background:${STATE_COLOURS[i]}"></i>${n}</span>`).join("") + `<span>line = |a| (g)</span>`;
 
-function renderLabels() {
-  const counts = status ? status.counts : {};
-  $("labels").innerHTML = Object.keys(GUIDE).map(l =>
-    `<button data-l="${l}" class="${l === label ? "sel" : ""}">${l}<span>${counts[l] ?? 0} saved</span></button>`).join("");
-  $("guide").textContent = GUIDE[label];
-  $("takes").disabled = TIMED.has(label);
-  $("seconds").disabled = !TIMED.has(label);
-}
-$("labels").onclick = e => { const b = e.target.closest("button"); if (b && !(status && status.recording)) { label = b.dataset.l; renderLabels(); } };
+const dur = s => s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`;
 
+// One card: the badge you're on (click its name to rename), then any others nearby.
 function renderBadges() {
-  if (!status.badges.length) return;
-  $("badges").innerHTML = status.badges.map(b => {
-    const isConn = status.connected === b.address;
-    const stale = !isConn && b.age > 5;
-    const where = isConn ? "connected" : stale ? `not seen ${Math.round(b.age)}s` : `<span class="state">${esc(b.state)}</span>`;
-    const action = isConn ? "<small>●</small>"
-      : `<button data-a="${esc(b.address)}" ${status.connected || status.connecting ? "disabled" : ""}>Connect</button>`;
-    return `<div class="badge"><div><b>${esc(b.name)}</b> <small>${esc(b.badge_id)} · ${b.rssi} dBm · ${where}</small></div>${action}</div>`;
-  }).join("");
+  const mine = status.connected || status.connecting || status.reconnecting;
+  const me = status.badges.find(b => b.address === mine);
+  let html = "";
+  if (mine) {
+    const conn = !!status.connected;
+    const what = conn ? `Connected · ${me ? me.rssi + " dBm · " : ""}lost ${status.lost}`
+      : status.connecting ? "Connecting…" : "Reconnecting…";
+    html += `<div class="badge me"><div class="who"><span class="dot ${conn ? "on" : "wait"}"></span><div>` +
+      `<button class="name" title="${esc(conn ? "Rename · " + status.info : "")}" ${conn ? "" : "disabled"}>${esc(me ? me.name : "Badge")}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>` +
+      `<div class="sub">${what}</div></div></div>` +
+      `<div class="acts"><button class="ibtn" data-op="disconnect" title="Disconnect" aria-label="Disconnect"><svg viewBox="0 0 24 24"><path d="${LINK_OFF}"/></svg></button></div></div>` +
+      `<div class="row" style="margin-top:4px"><button class="small" data-op="identify" ${conn ? "" : "disabled"}>Identify</button></div>`;
+  }
+  const others = status.badges.filter(b => b.address !== mine);
+  const card = (b, hidden) => {
+    const where = b.age > 5 ? `not seen ${Math.round(b.age)}s` : `${b.rssi} dBm`;
+    const a = esc(b.address);
+    return `<div class="badge"><div class="who"><span class="dot"></span><div><b>${esc(b.name)}</b><div class="sub">${where}</div></div></div>` +
+      `<div class="acts">${hidden ? "" : `<button class="ibtn" data-a="${a}" ${mine ? "disabled" : ""} title="Connect" aria-label="Connect to ${esc(b.name)}"><svg viewBox="0 0 24 24"><path d="${LINK}"/></svg></button>`}` +
+      `<button class="ibtn" data-${hidden ? "show" : "hide"}="${a}" title="${hidden ? "Show" : "Hide"} this badge" aria-label="${hidden ? "Show" : "Hide"} ${esc(b.name)}">` +
+      `<svg viewBox="0 0 24 24"><path d="${hidden ? EYE_OFF : EYE}"/></svg></button></div></div>`;
+  };
+  const shown = others.filter(b => !hiddenBadges.has(b.address));
+  const hidden = others.filter(b => hiddenBadges.has(b.address));
+  html += shown.map(b => card(b, false)).join("");
+  if (!html) html = `<span class="sub">Scanning for badges… open the pedometer app on one.</span>`;
+  // Read the expander's state from the page: it toggles natively, ahead of any toggle event.
+  const det = $("hiddenbadges");
+  hiddenOpen = hidden.length > 0 && (det ? det.open : hiddenOpen);
+  if (hidden.length) {
+    html += `<details id="hiddenbadges" ${hiddenOpen ? "open" : ""}><summary title="Hidden badges" aria-label="Hidden badges"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"/></svg></summary>` +
+      hidden.map(b => card(b, true)).join("") + `</details>`;
+  }
+  if (!badgesPressed && html !== badgesPainted) $("badges").innerHTML = badgesPainted = html;
 }
-$("badges").onclick = e => { const b = e.target.closest("button[data-a]"); if (b) { send({op: "connect", address: b.dataset.a}); log("connecting to " + b.dataset.a + "…"); } };
+// Status arrives every 0.5 s. Replacing the buttons between pointerdown and pointerup swallows the
+// click, so hold repaints while a press is in progress and skip ones that change nothing.
+let badgesPainted = null, badgesPressed = false;
+$("badges").addEventListener("pointerdown", () => { badgesPressed = true; });
+for (const ev of ["pointerup", "pointercancel"]) {
+  addEventListener(ev, () => {
+    if (!badgesPressed) return;
+    // Let the click handler run first, then catch up.
+    setTimeout(() => { badgesPressed = false; if (status) renderBadges(); }, 0);
+  });
+}
+const LINK = "M10.59,13.41C11,13.8 11,14.44 10.59,14.83C10.2,15.22 9.56,15.22 9.17,14.83C7.22,12.88 7.22,9.71 9.17,7.76V7.76L12.71,4.22C14.66,2.27 17.83,2.27 19.78,4.22C21.73,6.17 21.73,9.34 19.78,11.29L18.29,12.78C18.3,11.96 18.17,11.14 17.89,10.36L18.36,9.88C19.54,8.71 19.54,6.81 18.36,5.64C17.19,4.46 15.29,4.46 14.12,5.64L10.59,9.17C9.41,10.34 9.41,12.24 10.59,13.41M13.41,9.17C13.8,8.78 14.44,8.78 14.83,9.17C16.78,11.12 16.78,14.29 14.83,16.24V16.24L11.29,19.78C9.34,21.73 6.17,21.73 4.22,19.78C2.27,17.83 2.27,14.66 4.22,12.71L5.71,11.22C5.7,12.04 5.83,12.86 6.11,13.65L5.64,14.12C4.46,15.29 4.46,17.19 5.64,18.36C6.81,19.54 8.71,19.54 9.88,18.36L13.41,14.83C14.59,13.66 14.59,11.76 13.41,10.59C13,10.2 13,9.56 13.41,9.17Z";
+const LINK_OFF = "M2,5.27L3.28,4L20,20.72L18.73,22L13.9,17.17L11.29,19.78C9.34,21.73 6.17,21.73 4.22,19.78C2.27,17.83 2.27,14.66 4.22,12.71L5.71,11.22C5.7,12.04 5.83,12.86 6.11,13.65L5.64,14.12C4.46,15.29 4.46,17.19 5.64,18.36C6.81,19.54 8.71,19.54 9.88,18.36L12.5,15.76L10.88,14.15C10.87,14.39 10.77,14.64 10.59,14.83C10.2,15.22 9.56,15.22 9.17,14.83C8.12,13.77 7.63,12.37 7.72,11L2,5.27M12.71,4.22C14.66,2.27 17.83,2.27 19.78,4.22C21.73,6.17 21.73,9.34 19.78,11.29L18.29,12.78C18.3,11.96 18.17,11.14 17.89,10.36L18.36,9.88C19.54,8.71 19.54,6.81 18.36,5.64C17.19,4.46 15.29,4.46 14.12,5.64L10.79,8.97L9.38,7.55L12.71,4.22M13.41,9.17C13.8,8.78 14.44,8.78 14.83,9.17C16.2,10.54 16.61,12.5 16.06,14.23L14.28,12.46C14.23,11.78 13.94,11.11 13.41,10.59C13,10.2 13,9.56 13.41,9.17Z";
+const EYE = "M12,9A3,3 0 0,1 15,12A3,3 0 0,1 12,15A3,3 0 0,1 9,12A3,3 0 0,1 12,9M12,4.5C17,4.5 21.27,7.61 23,12C21.27,16.39 17,19.5 12,19.5C7,19.5 2.73,16.39 1,12C2.73,7.61 7,4.5 12,4.5M3.18,12C4.83,15.36 8.24,17.5 12,17.5C15.76,17.5 19.17,15.36 20.82,12C19.17,8.64 15.76,6.5 12,6.5C8.24,6.5 4.83,8.64 3.18,12Z";
+const EYE_OFF = "M2,5.27L3.28,4L20,20.72L18.73,22L15.65,18.92C14.5,19.3 13.28,19.5 12,19.5C7,19.5 2.73,16.39 1,12C1.69,10.24 2.79,8.69 4.19,7.46L2,5.27M12,9A3,3 0 0,1 15,12C15,12.35 14.94,12.69 14.83,13L11,9.17C11.31,9.06 11.65,9 12,9M12,4.5C17,4.5 21.27,7.61 23,12C22.18,14.08 20.79,15.88 19,17.19L17.58,15.76C18.94,14.82 20.06,13.54 20.82,12C19.17,8.64 15.76,6.5 12,6.5C10.91,6.5 9.84,6.68 8.84,7L7.3,5.47C8.74,4.85 10.33,4.5 12,4.5M3.18,12C4.83,15.36 8.24,17.5 12,17.5C12.69,17.5 13.37,17.43 14,17.29L11.72,15C10.29,14.85 9.15,13.71 9,12.28L5.6,8.87C4.61,9.72 3.78,10.78 3.18,12Z";
+// Hidden badges are remembered per browser by BLE address; the expander stays closed until opened.
+const hiddenBadges = new Set(JSON.parse(localStorage.getItem("hiddenBadges") || "[]"));
+let hiddenOpen = false;
+function setHidden(address, hide) {
+  hide ? hiddenBadges.add(address) : hiddenBadges.delete(address);
+  localStorage.setItem("hiddenBadges", JSON.stringify([...hiddenBadges]));
+  if (status) renderBadges();
+}
+$("badges").onclick = e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.hide) setHidden(b.dataset.hide, true);
+  else if (b.dataset.show) setHidden(b.dataset.show, false);
+  else if (b.dataset.a) { send({op: "connect", address: b.dataset.a}); log("connecting to " + b.dataset.a + "…"); }
+  else if (b.dataset.op) send({op: b.dataset.op});
+  else if (b.classList.contains("name") && togglePop($("renamepop"), b)) {
+    const me = status.badges.find(x => x.address === status.connected);
+    $("newname").value = me ? me.name : "";
+    $("newname").select();
+  }
+};
+function rename() {
+  const n = $("newname").value.trim();
+  if (n) { send({op: "rename", name: n}); log("renamed to " + n); }
+  $("renamepop").hidden = true;
+}
+$("rename").onclick = rename;
+$("newname").onkeydown = e => { if (e.key === "Enter") rename(); if (e.key === "Escape") $("renamepop").hidden = true; };
+
+// Scorecard: how the badge's model does on recordings it never trained on.
+const pct = v => Math.round(v * 100) + "%";
+const SCORE_ROWS = [["walk", "Spots walking", "#5fed83"], ["not_walk", "Ignores other movement", "#58a6ff"],
+  ["throw", "Throws", "#f0883e"], ["drop", "Drops", "#e9465a"]];
+function delta(now, before) {
+  if (before == null) return "";
+  const d = Math.round((now - before) * 100);
+  return d ? `<span class="delta ${d > 0 ? "up" : "down"}">${d > 0 ? "+" : ""}${d}</span>` : "";
+}
+function renderModel() {
+  const m = status.model || {}, card = m.hidden ? null : m.deployed, test = card && card.test;
+  $("hidemodel").checked = !!m.hidden;
+  if (!test) {
+    $("score").innerHTML = `<p class="hint">${card ? "Deployed. Record a few more runs and I'll hold some back to score it."
+      : "Record a few runs, then train. I'll score it on recordings it never saw."}</p>`;
+  } else {
+    const prev = card.previous;
+    $("score").innerHTML = `<div id="overall"><b>${pct(test.accuracy)}</b>${delta(test.accuracy, prev && prev.accuracy)}</div>` +
+      `<div class="sub">right on ${test.recordings ? test.recordings.length : ""} held-back recordings</div><div class="bars">` +
+      SCORE_ROWS.filter(([k]) => test.recall[k] != null).map(([k, name, colour]) =>
+        `<div class="bar"><span>${name} ${delta(test.recall[k], prev && prev.recall[k])}</span><span>${pct(test.recall[k])}</span>` +
+        `<div class="track"><i style="width:${pct(test.recall[k])};background:${colour}"></i></div></div>`).join("") + `</div>`;
+  }
+  const kept = !m.hidden && m.kept;
+  $("kept").hidden = !kept;
+  if (kept) $("kept").innerHTML = `New model scored ${pct(kept.test.accuracy)}, below the ${pct(kept.current.accuracy)} on your badge, so I kept the current one.` +
+    `<br><button class="small" id="force">Deploy anyway</button>`;
+}
+$("kept").onclick = e => { if (e.target.id === "force") trainDeploy(true); };
+$("hidemodel").onchange = () => {
+  status.model = {...(status.model || {}), hidden: $("hidemodel").checked};
+  $("modelstatus").textContent = "";
+  renderModel();
+  send({op: "hide_model", hidden: $("hidemodel").checked});
+};
+function trainDeploy(force) {
+  $("traindeploy").disabled = true;
+  $("modelstatus").textContent = "Training…";
+  send({op: "train_deploy", force});
+}
 
 function render() {
   renderBadges();
-  renderLabels();
+  renderModel();
   const conn = !!status.connected, rec = status.recording, p = status.pending;
-  $("connected").hidden = !conn;
-  $("info").textContent = status.info + (conn ? ` · lost packets ${status.lost}` : "");
-  $("startstop").disabled = !conn && !rec;
-  $("startstop").textContent = rec ? "Stop" : "Start";
-  $("startstop").className = rec ? "danger" : "primary";
-  $("mark").disabled = !rec;
-  if (rec) {
-    if (TIMED.has(rec.label)) {
-      const target = +$("seconds").value;
-      $("big").textContent = `${rec.seconds.toFixed(0)} / ${target} s`;
-      if (rec.seconds >= target) send({op: "stop"});
-    } else {
-      $("big").textContent = `${rec.flights} / ${rec.takes} flights`;
-    }
-    $("bigsub").textContent = `Recording ${rec.label} · ${rec.samples} samples · ${rec.marks} marks`;
-  } else if (status.connecting) {
-    $("big").textContent = "…"; $("bigsub").textContent = "Connecting";
+  const busy = !!(rec || p || guide);
+  for (const b of $("guides").querySelectorAll("button[data-g]")) b.disabled = !conn || busy;
+  $("guides").hidden = !!guide || !!rec;
+  $("traindeploy").disabled = $("modelstatus").textContent === "Training…" || !conn;
+  $("cancel").hidden = !guide;
+  $("startstop").hidden = !!guide;
+  $("startstop").disabled = (!conn && !rec) || (!rec && busy);
+  $("startstop").textContent = rec ? "Stop" : "Free record";
+  $("startstop").className = rec ? "danger" : "small ghost";
+  $("phasebar").hidden = !guide;
+  if (guide) {
+    renderGuide();
+  } else if (rec) {
+    $("big").textContent = dur(rec.seconds);
+    $("bigsub").textContent = `Recording · move however you like, then press Stop`;
+  } else if (status.connecting || status.reconnecting) {
+    $("big").textContent = "…"; $("bigsub").textContent = status.connecting ? "Connecting" : "Reconnecting to badge…";
   } else if (p) {
     $("big").textContent = "Review";
-    $("bigsub").textContent = "Save or discard the recording below.";
+    $("bigsub").textContent = "Tag what you did below, then save.";
   } else {
     $("big").textContent = conn ? "Ready" : "—";
-    $("bigsub").textContent = conn ? "Pick an action and press Start." : "Connect a badge, pick an action, press Start.";
+    $("bigsub").textContent = !conn ? "Connect a badge to start."
+      : lastSaved || "Pick something to train. I'll tell you what to do and tag it for you.";
   }
   $("pending").hidden = !p;
   if (p) {
-    const rows = [["Action", p.label], ["Duration", p.duration_s + " s"], ["Samples", `${p.samples} @ ${p.rate_hz} Hz`],
-      ["Flights detected", p.flights + (TIMED.has(p.label) ? "" : ` (target ${p.takes})`)], ["Marks", p.marks],
-      ["Lost packets", p.lost_packets], ["Ended", p.reason]];
+    const rows = [["Duration", p.duration_s + " s"], ["Samples", `${p.samples} @ ${p.rate_hz} Hz`],
+      ["Flights detected", p.flights], ["Lost packets", p.lost_packets]];
     $("summary").innerHTML = rows.map(([k, v]) => `<tr><td style="color:var(--dim)">${k}</td><td>${esc(v)}</td></tr>`).join("");
+    if (review && $("review").width !== $("review").clientWidth * (window.devicePixelRatio || 1)) renderReview();
   }
 }
 
 $("startstop").onclick = () => {
   if (status.recording) return send({op: "stop"});
-  send({op: "start", label, takes: +$("takes").value, plushy: $("plushy").checked, notes: $("notes").value});
-  log(`recording ${label}`);
+  lastSaved = "";
+  send({op: "start"});
+  log("recording");
 };
-$("mark").onclick = () => send({op: "mark"});
+
+// --- Guided training: timed prompts, tagged from whichever prompt was showing. ---
+// [label (null = not trained), what to say, hint, seconds, short cue for the badge screen]
+const ready = (hint, secs = 3) => [null, "Get ready", hint, secs, "READY"];
+// Untagged pause between actions: switching takes ~2 s and would muddy both labels.
+const stop = () => [null, "Stop", "Stand still for a moment.", 2, "STOP"];
+const GUIDES = {
+  walk: [
+    ready("Hold the badge the way you'll wear it."),
+    ["still", "Stand still", "Don't move.", 5, "STILL"],
+    ["walk", "Start walking", "Walk normally.", 15, "WALK"],
+    stop(),
+    ["unknown", "Fidget with your badge", "Turn it, tilt it, tap it. No steps.", 8, "FIDGET"],
+    stop(),
+    ["walk", "Walk again", "Walk normally.", 15, "WALK"],
+    stop(),
+    ["unknown", "Swing your arms", "Stay in place, move like you're talking.", 6, "SWAY"],
+    stop(),
+    ["walk", "Walk again", "Walk normally.", 10, "WALK"],
+    stop(),
+    ["still", "Stand still", "Don't move.", 4, "STILL"],
+  ],
+  throw: [ready("Hold it, ready to throw."), ...Array.from({length: 5}, () => [
+    ["throw", "Throw it", "Toss it up and catch it.", 3, "THROW"],
+    ["unknown", "Hold it", "Hold it in your hand.", 3, "HOLD"],
+  ]).flat(), ["still", "Set it down", "Leave it still.", 4, "STILL"]],
+  drop: [ready("Hold it out over something soft."), ...Array.from({length: 5}, () => [
+    ["drop", "Drop it", "Let it fall onto something soft.", 3, "DROP"],
+    ["unknown", "Pick it up", "Pick it up and hold it out again.", 4, "PICKUP"],
+  ]).flat(), ["still", "Leave it still", "Don't touch it.", 4, "STILL"]],
+};
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+// Mid-activity lines for the demo, keyed by cue and played in order. Only phases of
+// 6 s or more get one. Order through the walk guide: walk, fidget, walk, sway, walk.
+// They start as flat system prompts (robot voice) and the
+// personality leaks out as it goes. A line can be several parts, spoken back to back.
+const robot = text => ({text, pitch: 0.4, rate: 0.85});
+const QUIPS = {
+  WALK: [
+    [robot("Walking detected. Recording in progress.")],
+    [robot("Performing gait analysis."), "Is that your walk? Really? Wow."],
+    ["That's the walk of someone who just merged to main on a Friday."],
+  ],
+  FIDGET: [[robot("Movement logged. Please continue.")]],
+  SWAY: [["Big keynote energy."]],
+};
+// Speak one or more parts in sequence; a part is text or {text, pitch, rate}.
+const speak = (...parts) => {
+  if (!window.speechSynthesis) return;
+  speechSynthesis.cancel();
+  const chosen = speechSynthesis.getVoices().find(v => v.voiceURI === localStorage.getItem("voice"));
+  for (const part of parts) {
+    const {text, ...voice} = typeof part === "string" ? {text: part} : part;
+    const u = Object.assign(new SpeechSynthesisUtterance(text), voice);
+    if (chosen) u.voice = chosen;
+    speechSynthesis.speak(u);
+  }
+};
+// Settings: voice picker. Online voices load asynchronously, so refill on voiceschanged.
+function fillVoices() {
+  const saved = localStorage.getItem("voice") || "";
+  const voices = window.speechSynthesis ? speechSynthesis.getVoices() : [];
+  $("voice").innerHTML = `<option value="">Browser default</option>` + voices.map(v =>
+    `<option value="${esc(v.voiceURI)}">${esc(v.name)} (${esc(v.lang)})</option>`).join("");
+  $("voice").value = voices.some(v => v.voiceURI === saved) ? saved : "";
+}
+if (window.speechSynthesis) speechSynthesis.addEventListener("voiceschanged", fillVoices);
+fillVoices();
+$("voice").onchange = () => {
+  $("voice").value ? localStorage.setItem("voice", $("voice").value) : localStorage.removeItem("voice");
+  speak("Hello. I'll be your trainer today.");
+};
+$("voicetest").onclick = () => speak("Start walking.");
+// Gentle "beep-boop" a second before each instruction or quip, so the trainer knows speech is coming.
+const CHIME_LEAD_MS = 1000;
+let audio = null;
+function chime() {
+  audio ||= new (window.AudioContext || window.webkitAudioContext)();
+  audio.resume();
+  const t = audio.currentTime + 0.02;
+  [[880, 0], [587, 0.16]].forEach(([freq, at]) => {
+    const osc = audio.createOscillator(), gain = audio.createGain();
+    osc.type = "sine"; osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0, t + at);
+    gain.gain.linearRampToValueAtTime(0.12, t + at + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + at + 0.22);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(t + at); osc.stop(t + at + 0.25);
+  });
+}
+let guide = null, lastSaved = "";
+const GUIDE_TILES = [["walk", "Walk", "Steps vs. just moving it"], ["throw", "Throw", "Toss it up and catch it"],
+  ["drop", "Drop", "Let it fall onto something soft"]];
+$("guides").innerHTML = GUIDE_TILES.map(([k, name, hint]) =>
+  `<button class="tile" data-g="${k}" disabled><b><i style="background:${({walk: "#5fed83", throw: "#f0883e", drop: "#e9465a"})[k]}"></i>${name}</b>` +
+  `<span>${hint} · ${dur(GUIDES[k].reduce((t, step) => t + step[3], 0))}</span></button>`).join("");
+
+function renderGuide() {
+  const [label, say, hint, secs] = guide.steps[guide.i];
+  const left = Math.max(0, guide.endsAt - performance.now());
+  $("big").textContent = say;
+  const next = guide.steps[guide.i + 1];
+  $("bigsub").textContent = `${hint} · ${Math.ceil(left / 1000)}s · next: ${next ? next[1].toLowerCase() : "done"}`;
+  const bar = $("phasebar").firstElementChild;
+  bar.style.width = `${100 - left / (secs * 10)}%`;
+  bar.style.background = label ? ANNO_COLOURS[label] : "#4a524c";
+}
+
+async function runGuide(kind) {
+  const me = guide = {kind, steps: GUIDES[kind], i: 0, endsAt: 0, seen: false};
+  const quips = Object.fromEntries(Object.entries(QUIPS).map(([cue, lines]) => [cue, [...lines]]));
+  lastSaved = "";
+  chime();
+  await sleep(CHIME_LEAD_MS);
+  if (guide !== me) return;
+  send({op: "start", notes: "guided " + kind});
+  log(`guided ${kind} run`);
+  for (let i = 0; i < me.steps.length; i++) {
+    if (guide !== me) return;
+    const [label, say, , secs, cue] = me.steps[i];
+    me.i = i; me.endsAt = performance.now() + secs * 1000;
+    send({op: "phase", label, cue, ms: secs * 1000});
+    speak(say);
+    render();
+    let quipAt = secs >= 6 && quips[cue]?.length ? me.endsAt - secs * 600 : Infinity;
+    let quipChimeAt = quipAt - CHIME_LEAD_MS;
+    let chimeAt = me.endsAt - CHIME_LEAD_MS;
+    while (guide === me && performance.now() < me.endsAt) {
+      await sleep(100);
+      if (performance.now() >= quipChimeAt) { quipChimeAt = Infinity; chime(); }
+      if (performance.now() >= quipAt) { quipAt = Infinity; speak(...quips[cue].shift()); }
+      if (guide === me && performance.now() >= chimeAt) { chimeAt = Infinity; chime(); }
+      renderGuide();
+    }
+  }
+  if (guide !== me) return;
+  guide = null;
+  speak("Done. Nice.");
+  send({op: "stop"});
+  render();
+}
+function stopGuide(reason) {
+  if (!guide) return;
+  guide = null;
+  if (window.speechSynthesis) speechSynthesis.cancel();
+  log(reason, reason === "cancelled" ? "" : "err");
+  render();
+}
+$("guides").onclick = e => { const b = e.target.closest("button[data-g]"); if (b && !b.disabled) runGuide(b.dataset.g); };
+$("cancel").onclick = () => { stopGuide("cancelled"); send({op: "cancel"}); };
 document.addEventListener("keydown", e => {
-  if (e.code === "Space" && e.target.tagName !== "INPUT") { e.preventDefault(); if (status && status.recording) send({op: "mark"}); }
+  if (e.target.tagName === "INPUT") return;
+  const i = +e.key - 1;
+  if (review && !$("pending").hidden && i >= 0 && i < ANNO_LABELS.length) annotate(ANNO_LABELS[i]);
+  if (e.key === "Escape") { sel = null; renderReview(); }
 });
-$("save").onclick = () => send({op: "save"});
+$("save").onclick = () => send({op: "save", segments: segs.map(s => ({start_ms: Math.round(s.start), end_ms: Math.round(s.end), label: s.label}))});
 $("discard").onclick = () => { send({op: "discard"}); log("discarded"); };
-$("identify").onclick = () => send({op: "identify"});
-$("disconnect").onclick = () => send({op: "disconnect"});
-$("rename").onclick = () => { const n = $("newname").value.trim(); if (n) { send({op: "rename", name: n}); log("renamed to " + n); $("newname").value = ""; } };
+$("traindeploy").onclick = () => trainDeploy(false);
 
 function draw() {
   const c = $("plot"), dpr = window.devicePixelRatio || 1;
@@ -201,16 +595,16 @@ function draw() {
   if (samples.length) {
     const tEnd = samples[samples.length - 1][0], tStart = tEnd - WINDOW_MS;
     const x = t => (t - tStart) / WINDOW_MS * w, y = v => h - Math.min(v, 4) / 4 * h;
-    g.globalAlpha = 0.35;
+    g.globalAlpha = theme.band;
     for (let i = 0; i < samples.length - 1; i++) {
       const [t, , s] = samples[i];
       g.fillStyle = STATE_COLOURS[s] || "#333";
       g.fillRect(x(t), 0, Math.max(1, x(samples[i + 1][0]) - x(t)) + 0.5, h);
     }
     g.globalAlpha = 1;
-    g.strokeStyle = "#30363d"; g.fillStyle = "#8b949e"; g.font = "11px system-ui"; g.lineWidth = 1;
+    g.strokeStyle = theme.grid; g.fillStyle = theme.dim; g.font = "11px ui-monospace, monospace"; g.lineWidth = 1;
     for (const v of [0.3, 1, 2, 3]) { g.beginPath(); g.moveTo(0, y(v)); g.lineTo(w, y(v)); g.stroke(); g.fillText(v + " g", 4, y(v) - 3); }
-    g.strokeStyle = "#e6edf3"; g.lineWidth = 1.5; g.beginPath();
+    g.strokeStyle = theme.accent; g.lineWidth = 1.5; g.beginPath();
     samples.forEach(([t, m], i) => i ? g.lineTo(x(t), y(m)) : g.moveTo(x(t), y(m)));
     g.stroke();
   }
@@ -218,30 +612,125 @@ function draw() {
 }
 requestAnimationFrame(draw);
 
+// --- Review annotation: drag across the chart, then tag what was happening. ---
+const ANNO_LABELS = ["walk", "throw", "drop", "still", "unknown"];
+const ANNO_COLOURS = {walk: "#5fed83", still: "#58a6ff", unknown: "#a371f7", throw: "#f0883e", drop: "#e9465a", ignore: "#4a524c"};
+const ANNO_NAMES = {unknown: "other"};
+const annoName = l => l === "unknown" ? "other" : l;
+let review = null, segs = [], sel = null, dragFrom = null;
+
+$("annolabels").innerHTML = ANNO_LABELS.map((l, i) =>
+  `<button data-l="${l}" disabled><i style="background:${ANNO_COLOURS[l]}"></i>${ANNO_NAMES[l] || l}<kbd>${i + 1}</kbd></button>`).join("");
+$("annolabels").onclick = e => { const b = e.target.closest("button"); if (b) annotate(b.dataset.l); };
+$("segs").onclick = e => { const b = e.target.closest("button[data-i]"); if (b) { segs.splice(+b.dataset.i, 1); renderReview(); } };
+
+function annotate(l) {
+  if (!sel || sel[1] - sel[0] < 50) return;
+  const [a, b] = sel;
+  segs = segs.flatMap(s => s.end <= a || s.start >= b ? [s]
+    : [s.start < a && {...s, end: a}, s.end > b && {...s, start: b}].filter(Boolean));
+  segs.push({start: a, end: b, label: l});
+  segs.sort((p, q) => p.start - q.start);
+  sel = null;
+  renderReview();
+}
+
+function reviewX(e) {
+  const r = $("review").getBoundingClientRect();
+  return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * review.duration_ms;
+}
+$("review").onmousedown = e => { if (review) { dragFrom = reviewX(e); sel = null; renderReview(); } };
+window.addEventListener("mousemove", e => { if (dragFrom !== null) { const t = reviewX(e); sel = [Math.min(dragFrom, t), Math.max(dragFrom, t)]; renderReview(); } });
+window.addEventListener("mouseup", () => { dragFrom = null; });
+
+const fmt = ms => (ms / 1000).toFixed(1) + " s";
+
+function renderReview() {
+  if (!review) return;
+  $("annohint").textContent = "Drag across the chart to select a stretch, then tag it (or press 1–5). Use other for lifting or handling. Only tagged time is trained.";
+  for (const b of $("annolabels").querySelectorAll("button")) b.disabled = !sel;
+  $("save").disabled = !segs.length;
+  $("save").title = segs.length ? "" : "Tag at least one stretch first";
+  $("segs").innerHTML = segs.map((s, i) =>
+    `<div><i style="background:${ANNO_COLOURS[s.label]}"></i><span style="text-transform:capitalize;min-width:80px">${annoName(s.label)}</span>` +
+    `<span style="color:var(--dim)">${fmt(s.start)} – ${fmt(s.end)}</span><button data-i="${i}">Remove</button></div>`).join("");
+
+  const c = $("review"), dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth, h = c.clientHeight;
+  if (!w) return;
+  c.width = w * dpr; c.height = h * dpr;
+  const g = c.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const d = review.data, span = review.duration_ms || 1;
+  const x = t => t / span * w, y = v => h - Math.min(v, 4) / 4 * h;
+  g.fillStyle = theme.inset; g.fillRect(0, 0, w, h);
+  for (const s of segs) {
+    g.globalAlpha = 0.28; g.fillStyle = ANNO_COLOURS[s.label];
+    g.fillRect(x(s.start), 0, x(s.end) - x(s.start), h);
+    g.globalAlpha = 1; g.fillRect(x(s.start), 0, x(s.end) - x(s.start), 4);
+    g.fillStyle = theme.text; g.font = "11px ui-monospace, monospace";
+    if (x(s.end) - x(s.start) > 30) g.fillText(annoName(s.label), x(s.start) + 4, 16);
+  }
+  g.strokeStyle = theme.grid; g.fillStyle = theme.dim; g.font = "11px ui-monospace, monospace"; g.lineWidth = 1;
+  for (const v of [1, 2, 3]) { g.beginPath(); g.moveTo(0, y(v)); g.lineTo(w, y(v)); g.stroke(); g.fillText(v + " g", 4, y(v) - 3); }
+  const step = span > 120000 ? 10000 : span > 30000 ? 5000 : 1000;
+  for (let t = step; t < span; t += step) g.fillText(t / 1000 + "s", x(t) + 2, h - 4);
+  g.strokeStyle = theme.accent; g.lineWidth = 1.2; g.beginPath();
+  d.forEach(([t, m], i) => i ? g.lineTo(x(t), y(m)) : g.moveTo(x(t), y(m)));
+  g.stroke();
+  if (sel) {
+    g.fillStyle = theme.sel; g.fillRect(x(sel[0]), 0, x(sel[1]) - x(sel[0]), h);
+    g.strokeStyle = theme.accent; g.strokeRect(x(sel[0]) + 0.5, 0.5, x(sel[1]) - x(sel[0]), h - 1);
+    g.fillStyle = theme.text; g.fillText(`${fmt(sel[0])} – ${fmt(sel[1])}`, x(sel[0]) + 4, 30);
+  }
+}
+window.addEventListener("resize", renderReview);
+
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
-  ws.onopen = () => { $("conn").textContent = "backend connected"; };
+  ws.onopen = () => { $("conn").textContent = ""; };
   ws.onclose = () => { $("conn").textContent = "backend disconnected, retrying…"; setTimeout(connect, 1000); };
   ws.onmessage = e => {
     const m = JSON.parse(e.data);
     if (m.type === "status") {
       const was = status && status.connected;
-      status = m; render();
+      status = m;
+      if (guide && m.recording) guide.seen = true;
+      if (guide && guide.seen && !m.recording) stopGuide("lost the badge, run stopped");
+      render();
       if (was && !m.connected) log("badge disconnected", "err");
       if (!was && m.connected) log("connected: " + m.info);
     } else if (m.type === "samples") {
       samples.push(...m.data);
       const cut = samples[samples.length - 1][0] - WINDOW_MS - 500;
       while (samples.length && samples[0][0] < cut) samples.shift();
+    } else if (m.type === "review") {
+      review = m; sel = null;
+      segs = (m.segments || []).map(s => ({start: s.start_ms, end: s.end_ms, label: s.label}));
+      requestAnimationFrame(renderReview);
     } else if (m.type === "saved") {
-      log(m.path ? "saved " + m.path : "nothing to save");
+      if (m.tagged) {
+        lastSaved = "Saved " + Object.entries(m.tagged).map(([k, v]) => `${annoName(k)} ${Math.round(v)}s`).join(" · ") +
+          ". Run another, or Train & deploy.";
+        log(lastSaved);
+      } else {
+        log(m.path ? "saved " + m.path + (segs.length ? ` (${segs.length} tagged)` : "") : "nothing to save");
+      }
+      review = null; segs = []; sel = null;
+    } else if (m.type === "training") {
+      $("modelstatus").textContent = "Training…";
+    } else if (m.type === "trained") {
+      status.model = m.model;
+      $("modelstatus").textContent = m.deployed ? "Deployed just now" : "";
+      log(m.deployed ? `model ${m.deployed} deployed` : "new model scored lower, kept the current one");
+      render();
     } else if (m.type === "error") {
       log(m.message, "err");
+      if ($("modelstatus").textContent === "Training…") { $("modelstatus").textContent = "Failed: " + m.message; render(); }
     }
   };
 }
 connect();
-renderLabels();
 </script>
 </body>
 </html>

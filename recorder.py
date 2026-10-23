@@ -1,9 +1,10 @@
 """Training-data recorder for badge motion models.
 
 Runs a local web UI (http://localhost:8765) backed by bleak. Pick a badge,
-connect over GATT, pick an action, and record a session; the badge streams
-every IMU sample (with its detector state) and the session is saved to
-data/<label>/<timestamp>_<badge>.csv plus a .json sidecar.
+connect over GATT, and record whatever movement you like; the badge streams
+every IMU sample (with its detector state). Tag stretches of the recording as
+walk/throw/drop/still/other, and it is saved to
+data/recordings/<timestamp>_<badge>.csv plus a .json sidecar.
 
 Usage:  python recorder.py [--port 8765] [--no-browser]
 """
@@ -24,30 +25,58 @@ ROOT = Path(__file__).resolve().parent
 from protocol import (
     CMD_IDENTIFY,
     CMD_LABEL,
+    CMD_MODEL_BEGIN,
+    CMD_MODEL_DATA,
+    CMD_MODEL_END,
+    CMD_MODEL_SHOW,
     CMD_NAME,
+    CMD_PING,
     COMPANY_ID,
+    CONTROL_MAX,
     INFO_UUID,
+    PING_INTERVAL_MS,
     STREAM_UUID,
     CONTROL_UUID,
+    model_checksum,
     unpack_mfg,
     unpack_samples,
 )
+import train as trainer
+
+LOG_PATH = Path(__file__).parent / "data" / "recorder.log"
+RETRY_MIN_S = 2
+RETRY_MAX_S = 15
+
+
+def log(*parts):
+    line = datetime.now().strftime("%H:%M:%S ") + " ".join(str(p) for p in parts)
+    print(line)
+    try:
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with LOG_PATH.open("a") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+
+
+def describe(e):
+    return str(e) or type(e).__name__
 
 DATA_DIR = ROOT / "data"
 WEB_DIR = ROOT / "web"
+DIST_DIR = ROOT / "dist"
+MODEL_PATH = DIST_DIR / "model.py"
+# The last model that reached a badge, and its test-set scorecard.
+DEPLOYED_MODEL = DIST_DIR / "deployed_model.py"
+DEPLOYED_CARD = DIST_DIR / "deployed.json"
+MODEL_HIDDEN = DIST_DIR / "model_hidden"  # present while the demo "hide the model" setting is on
 LABELS = ("throw", "drop", "still", "walk", "unknown")
+SEGMENT_LABELS = LABELS + ("ignore",)
+GUIDE_REACTION_MS = 1000  # skip this long after each guided cue while the user reacts
 STATE_NAMES = ("STILL", "WALK", "FLYING", "THROW", "DROP", "HANDLING")
 FLYING = 2
 LSB_PER_G = 16384.0
 CSV_HEADER = ("t_ms", "ax", "ay", "az", "gx", "gy", "gz", "events", "state")
-
-
-def session_counts():
-    counts = {}
-    for label in LABELS:
-        folder = DATA_DIR / label
-        counts[label] = len(list(folder.glob("*.csv"))) if folder.exists() else 0
-    return counts
 
 
 class Recorder:
@@ -56,7 +85,12 @@ class Recorder:
         self.devices = {}  # address -> BLEDevice
         self.sockets = set()
         self.client = None
+        self.kept = None
         self.address = None
+        self.hide_model = MODEL_HIDDEN.exists()  # demo: show "no model" in the UI and on the badge until the next training run
+        self.target = None  # badge to stay connected to; cleared by an explicit disconnect
+        self.retry_at = 0.0
+        self.retry_delay = 0.0
         self.info = ""
         self.connecting = False
         self.last_seq = None
@@ -65,7 +99,10 @@ class Recorder:
         self.t_ms = 0
         self.recording = None  # dict while recording
         self.pending = None  # finished recording awaiting save/discard
+        self.review_ready = False  # pending recording not yet sent to the UI
         self.live = []  # samples to push to the UI
+        self.seconds = None  # cached tagged seconds per label; reset on save
+        self.write_lock = asyncio.Lock()  # CoreBluetooth allows one pending write per characteristic
 
     # --- scanning ----------------------------------------------------------
     def on_adv(self, dev, adv):
@@ -92,32 +129,68 @@ class Recorder:
         dev = self.devices.get(address)
         if dev is None:
             raise RuntimeError("badge not seen yet")
+        self.target = address
         self.connecting = True
         await self.broadcast_status()
+        client = BleakClient(dev, timeout=10, disconnected_callback=self.on_disconnect)
         try:
-            client = BleakClient(dev, timeout=20, disconnected_callback=self.on_disconnect)
             await client.connect()
-            self.client = client
-            self.address = address
             self.last_seq = None
             self.lost = 0
             self.t_last16 = None
             self.info = (await client.read_gatt_char(INFO_UUID)).decode(errors="replace")
             await client.start_notify(STREAM_UUID, self.on_stream)
+            self.client = client
+            self.address = address
+            self.retry_delay = 0.0
+            log("connected", self.info)
+            try:
+                await self.command(CMD_MODEL_SHOW, "0" if self.hide_model else "1")
+            except Exception as e:
+                log("couldn't update the badge's model line:", describe(e))
+        except Exception as e:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            raise RuntimeError("couldn't reach the badge, retrying") from e
         finally:
             self.connecting = False
-        await self.broadcast_status()
+            await self.broadcast_status()
 
-    def on_disconnect(self, _client):
-        self.loop.call_soon_threadsafe(self._handle_disconnect)
+    async def reconnect(self):
+        try:
+            await self.connect(self.target)
+        except Exception as e:
+            # Back off so a wedged badge has time to restart its BLE stack.
+            self.retry_delay = min(RETRY_MAX_S, max(RETRY_MIN_S, self.retry_delay * 2))
+            self.retry_at = time.time() + self.retry_delay
+            log("reconnect failed:", describe(e.__cause__ or e), "- retrying in %ds" % self.retry_delay)
 
-    def _handle_disconnect(self):
+    def on_disconnect(self, client):
+        self.loop.call_soon_threadsafe(self._handle_disconnect, client)
+
+    def _handle_disconnect(self, client=None):
+        if client is not None and client is not self.client:
+            return
+        if self.client is not None:
+            log("badge disconnected")
         self.client = None
         if self.recording is not None:
             self.finish_recording(reason="disconnected")
         self.loop.create_task(self.broadcast_status())
 
+    async def drop_link(self):
+        client = self.client
+        self._handle_disconnect()
+        if client is not None:
+            try:
+                await asyncio.wait_for(client.disconnect(), 5)
+            except Exception:
+                pass
+
     async def disconnect(self):
+        self.target = None
         client = self.client
         if client is not None:
             try:
@@ -131,7 +204,93 @@ class Recorder:
     async def command(self, op, arg=""):
         if self.client is None:
             raise RuntimeError("not connected")
-        await self.client.write_gatt_char(CONTROL_UUID, op + arg.encode()[:60], response=True)
+        await self.write_control(op + arg.encode()[:60])
+
+    async def write_control(self, data):
+        async with self.write_lock:
+            await asyncio.wait_for(self.client.write_gatt_char(CONTROL_UUID, data, response=True), 5)
+
+    async def deploy_model(self, source):
+        if self.client is None:
+            raise RuntimeError("connect a badge to deploy")
+        chunk = max(20, min(CONTROL_MAX, self.client.mtu_size - 3) - 1)
+        write = self.write_control
+        await write(CMD_MODEL_BEGIN)
+        for i in range(0, len(source), chunk):
+            await write(CMD_MODEL_DATA + source[i:i + chunk])
+        tag = "%04x" % model_checksum(source)
+        await write(CMD_MODEL_END + f"{len(source)},{model_checksum(source)}".encode())
+        for _ in range(20):
+            await asyncio.sleep(0.25)
+            self.info = (await self.client.read_gatt_char(INFO_UUID)).decode(errors="replace")
+            if f"model={tag}" in self.info:
+                return tag
+            if "model=err" in self.info:
+                break
+        raise RuntimeError("badge didn't accept the model (is the pedometer app up to date?)")
+
+    def deployed_card(self):
+        """The last deployed scorecard, if the connected badge is running it."""
+        if not DEPLOYED_CARD.is_file():
+            return None
+        try:
+            card = json.loads(DEPLOYED_CARD.read_text(encoding="utf-8"))
+        except ValueError:
+            return None
+        if self.info and f"model={card.get('tag')}" not in self.info.split():
+            return None
+        return card
+
+    def model_card(self):
+        """Scorecard of the model on the badge, plus a rejected candidate if any."""
+        return {"deployed": self.deployed_card(), "kept": self.kept, "hidden": self.hide_model}
+
+    async def set_model_hidden(self, hidden):
+        if hidden == self.hide_model:
+            return
+        self.hide_model = hidden
+        if hidden:
+            DIST_DIR.mkdir(parents=True, exist_ok=True)
+            MODEL_HIDDEN.touch()
+        else:
+            MODEL_HIDDEN.unlink(missing_ok=True)
+        if self.client is not None:
+            try:
+                await self.command(CMD_MODEL_SHOW, "0" if hidden else "1")
+            except Exception as e:
+                log("couldn't update the badge's model line:", describe(e))
+
+    async def train_and_deploy(self, force=False):
+        """Train, then deploy only if the new model scores at least as well on
+        the fixed test recordings as the one already deployed (unless forced).
+        While the model is hidden for a demo, always deploy and don't compare
+        against the hidden model."""
+        demo = self.hide_model
+        force = force or demo
+        await self.broadcast({"type": "training"})
+        baseline_path = DEPLOYED_MODEL if self.deployed_card() else None
+        report = await asyncio.to_thread(trainer.train, DATA_DIR, MODEL_PATH, baseline_path)
+        test = dict(report["test"] or {})
+        baseline = test.pop("baseline", None)
+        if (not force and test and baseline
+                and test["accuracy"] < baseline["accuracy"]):
+            self.kept = {"test": test, "current": baseline}
+            log(f"kept deployed model: new {test['accuracy']:.0%} < current {baseline['accuracy']:.0%}")
+            await self.broadcast({"type": "trained", "deployed": None, "model": self.model_card()})
+            return
+        source = MODEL_PATH.read_bytes()
+        tag = await self.deploy_model(source)
+        DEPLOYED_MODEL.write_bytes(source)
+        DEPLOYED_CARD.write_text(json.dumps({
+            "tag": tag,
+            "deployed_at": datetime.now().isoformat(timespec="seconds"),
+            "test": test or None,
+            "previous": None if demo else baseline,
+            "windows": report["windows_per_label"],
+        }, indent=2), encoding="utf-8")
+        self.kept = None
+        await self.set_model_hidden(False)
+        await self.broadcast({"type": "trained", "deployed": tag, "model": self.model_card()})
 
     def on_stream(self, _char, data):
         seq, samples = unpack_samples(bytes(data))
@@ -153,17 +312,13 @@ class Recorder:
             self.live.append((self.t_ms, round(mag, 3), state))
 
     # --- recording ---------------------------------------------------------
-    def start_recording(self, label, takes, plushy, notes):
-        if label not in LABELS:
-            raise RuntimeError("unknown label")
+    def start_recording(self, notes=""):
         self.pending = None
         self.recording = {
-            "label": label,
-            "takes": takes,
-            "plushy": plushy,
             "notes": notes,
             "rows": [],
             "marks": [],
+            "phases": [],
             "flights": 0,
             "prev_state": None,
             "started": datetime.now(),
@@ -173,6 +328,28 @@ class Recorder:
         rec = self.recording
         if rec is not None:
             rec["marks"].append(self.t_ms)
+
+    def phase(self, label, cue="", ms=0):
+        """Guided runs: the UI switched prompt. Stamp it on the badge clock."""
+        rec = self.recording
+        if rec is None:
+            return
+        label = label if label in SEGMENT_LABELS else None
+        rec["phases"].append({"t_ms": self.t_ms, "label": label, "cue": str(cue)[:12], "ms": int(ms)})
+
+    @staticmethod
+    def phase_segments(phases, t0, end_ms):
+        """Turn guided phases into segments, skipping the reaction time after each cue."""
+        out = []
+        for i, ph in enumerate(phases):
+            if not ph["label"]:
+                continue
+            start = ph["t_ms"] - t0 + GUIDE_REACTION_MS
+            stop = (phases[i + 1]["t_ms"] - t0) if i + 1 < len(phases) else end_ms
+            stop = min(stop, end_ms)
+            if stop - start >= 500:
+                out.append({"start_ms": max(0, start), "end_ms": stop, "label": ph["label"]})
+        return out
 
     def finish_recording(self, reason="stopped"):
         rec, self.recording = self.recording, None
@@ -184,25 +361,59 @@ class Recorder:
         rec["rate_hz"] = round((len(rows) - 1) / duration, 1) if duration else 0
         rec["reason"] = reason
         rec["lost_packets"] = self.lost
+        if rec["phases"] and rows:
+            rec["auto_segments"] = self.phase_segments(rec["phases"], rows[0][0], rows[-1][0] - rows[0][0])
         self.pending = rec
+        self.review_ready = True
 
-    def save_pending(self):
-        rec, self.pending = self.pending, None
+    def review(self):
+        """Whole pending session as (t_ms from start, |a| in g, state) for annotation."""
+        rec = self.pending
         if rec is None or not rec["rows"]:
             return None
+        t0 = rec["rows"][0][0]
+        data = [
+            (row[0] - t0, round(math.sqrt(row[1] ** 2 + row[2] ** 2 + row[3] ** 2) / LSB_PER_G, 3), row[8])
+            for row in rec["rows"]
+        ]
+        return {"type": "review", "duration_ms": data[-1][0], "data": data, "segments": rec.get("auto_segments", [])}
+
+    @staticmethod
+    def clean_segments(segments, duration_ms):
+        out = []
+        for seg in segments or ():
+            label = str(seg.get("label", "")).lower()
+            if label not in SEGMENT_LABELS:
+                raise RuntimeError("unknown segment label: %s" % label)
+            start = max(0, int(seg["start_ms"]))
+            end = min(duration_ms, int(seg["end_ms"]))
+            if end > start:
+                out.append({"start_ms": start, "end_ms": end, "label": label})
+        out.sort(key=lambda s: s["start_ms"])
+        for a, b in zip(out, out[1:]):
+            if b["start_ms"] < a["end_ms"]:
+                raise RuntimeError("segments overlap")
+        return out
+
+    def save_pending(self, segments=None):
+        rec = self.pending
+        if rec is None or not rec["rows"]:
+            self.pending = None
+            return None
+        t0 = rec["rows"][0][0]
+        segments = self.clean_segments(segments, rec["rows"][-1][0] - t0)
+        self.pending = None
         badge = self.badges.get(self.address, {})
         stamp = rec["started"].strftime("%Y%m%d-%H%M%S")
-        folder = DATA_DIR / rec["label"]
+        folder = DATA_DIR / trainer.RECORDINGS
         folder.mkdir(parents=True, exist_ok=True)
         stem = "%s_%s" % (stamp, badge.get("badge_id", "unknown"))
-        t0 = rec["rows"][0][0]
         with open(folder / (stem + ".csv"), "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(CSV_HEADER)
             for row in rec["rows"]:
                 w.writerow((row[0] - t0,) + row[1:])
         meta = {
-            "label": rec["label"],
             "badge_id": badge.get("badge_id"),
             "badge_name": badge.get("name"),
             "badge_info": self.info,
@@ -210,29 +421,36 @@ class Recorder:
             "duration_s": rec["duration_s"],
             "samples": len(rec["rows"]),
             "rate_hz": rec["rate_hz"],
-            "takes_target": rec["takes"],
             "flights_detected": rec["flights"],
             "marks_ms": [m - t0 for m in rec["marks"]],
-            "plushy": rec["plushy"],
+            "segments": segments,
+            "guided": [{**ph, "t_ms": ph["t_ms"] - t0} for ph in rec["phases"]],
             "notes": rec["notes"],
             "lost_packets": rec["lost_packets"],
             "end_reason": rec["reason"],
             "lsb_per_g": LSB_PER_G,
         }
         (folder / (stem + ".json")).write_text(json.dumps(meta, indent=2))
+        self.seconds = None
         return str((folder / (stem + ".csv")).relative_to(ROOT))
 
     def badge_prompt(self):
         rec = self.recording
         if rec is None:
             return ""
-        label = rec["label"].upper()
-        if rec["label"] in ("throw", "drop"):
-            return "%s %d/%d" % (label, rec["flights"], rec["takes"])
+        if rec["phases"]:
+            ph = rec["phases"][-1]
+            left = max(0, ph["t_ms"] + ph["ms"] - self.t_ms + 999) // 1000
+            return "%s %d" % (ph["cue"], left) if ph["ms"] else ph["cue"]
         secs = (rec["rows"][-1][0] - rec["rows"][0][0]) // 1000 if len(rec["rows"]) > 1 else 0
-        return "%s %ds" % (label, secs)
+        return "REC %ds" % secs
 
     # --- UI ----------------------------------------------------------------
+    def label_seconds(self):
+        if self.seconds is None:
+            self.seconds = trainer.label_seconds(DATA_DIR)
+        return self.seconds
+
     def status(self):
         rec = self.recording
         pend = self.pending
@@ -245,13 +463,12 @@ class Recorder:
             ),
             "connected": self.address if self.client is not None else None,
             "connecting": self.connecting,
+            "reconnecting": self.target if self.client is None else None,
             "info": self.info,
             "lost": self.lost,
             "recording": None
             if rec is None
             else {
-                "label": rec["label"],
-                "takes": rec["takes"],
                 "flights": rec["flights"],
                 "marks": len(rec["marks"]),
                 "samples": len(rec["rows"]),
@@ -260,10 +477,11 @@ class Recorder:
             "pending": None
             if pend is None
             else {
-                k: pend[k] for k in ("label", "takes", "flights", "duration_s", "rate_hz", "lost_packets", "reason")
+                k: pend[k] for k in ("flights", "duration_s", "rate_hz", "lost_packets", "reason")
             }
             | {"marks": len(pend["marks"]), "samples": len(pend["rows"])},
-            "counts": session_counts(),
+            "seconds": self.label_seconds(),
+            "model": self.model_card(),
         }
 
     async def broadcast(self, msg):
@@ -277,14 +495,41 @@ class Recorder:
     async def broadcast_status(self):
         await self.broadcast(self.status())
 
+    async def keep_alive(self):
+        if self.client is not None:
+            try:
+                await self.write_control(CMD_PING)
+                self.ping_failures = 0
+            except Exception:
+                self.ping_failures += 1
+                if self.ping_failures >= 2:
+                    log("badge stopped answering, dropping link")
+                    await self.drop_link()
+        elif self.target and not self.connecting and time.time() >= self.retry_at:
+            b = self.badges.get(self.target)
+            if b and time.time() - b["seen"] < 5:
+                await self.reconnect()
+
     async def pump(self):
         last_status = 0
         last_prompt = None
+        last_ping = 0
+        self.ping_failures = 0
+        alive = None
         while True:
             await asyncio.sleep(0.05)
+            now = time.time()
+            if (alive is None or alive.done()) and now - last_ping >= PING_INTERVAL_MS / 1000:
+                last_ping = now
+                alive = asyncio.create_task(self.keep_alive())
             if self.live:
                 batch, self.live = self.live, []
                 await self.broadcast({"type": "samples", "data": batch})
+            if self.review_ready:
+                self.review_ready = False
+                msg = self.review()
+                if msg:
+                    await self.broadcast(msg)
             now = time.time()
             if now - last_status >= 0.5:
                 last_status = now
@@ -311,16 +556,34 @@ class Recorder:
             if self.address in self.badges:
                 self.badges[self.address]["name"] = name
         elif op == "start":
-            self.start_recording(msg["label"], int(msg.get("takes", 10)), bool(msg.get("plushy")), msg.get("notes", ""))
+            self.start_recording(msg.get("notes", ""))
         elif op == "mark":
             self.mark()
+        elif op == "phase":
+            self.phase(msg.get("label"), msg.get("cue", ""), msg.get("ms", 0))
         elif op == "stop":
             self.finish_recording()
+            pend = self.pending
+            if pend is not None and pend.get("auto_segments"):
+                segments = pend["auto_segments"]
+                path = self.save_pending(segments)
+                self.review_ready = False
+                tagged = {}
+                for seg in segments:
+                    tagged[seg["label"]] = tagged.get(seg["label"], 0) + (seg["end_ms"] - seg["start_ms"]) / 1000
+                await self.broadcast({"type": "saved", "path": path, "tagged": tagged})
+        elif op == "cancel":
+            self.recording = None
+            self.pending = None
         elif op == "save":
-            path = self.save_pending()
+            path = self.save_pending(msg.get("segments"))
             await self.broadcast({"type": "saved", "path": path})
         elif op == "discard":
             self.pending = None
+        elif op == "train_deploy":
+            await self.train_and_deploy(bool(msg.get("force")))
+        elif op == "hide_model":
+            await self.set_model_hidden(bool(msg.get("hidden")))
         await self.broadcast_status()
 
 
@@ -331,6 +594,9 @@ async def ws_handler(request):
     rec.sockets.add(ws)
     await ws.send_str(json.dumps({"type": "hello", "labels": LABELS}))
     await ws.send_str(json.dumps(rec.status()))
+    review = rec.review()
+    if review:
+        await ws.send_str(json.dumps(review))
     async for m in ws:
         if m.type != WSMsgType.TEXT:
             continue

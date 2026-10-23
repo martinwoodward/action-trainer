@@ -76,6 +76,20 @@ SAMPLE_SIZE = struct.calcsize(SAMPLE_FORMAT)
 CMD_NAME = b"N"  # N<name>: rename the badge and persist it
 CMD_LABEL = b"L"  # L<text>: show a recording prompt on the badge ("" clears)
 CMD_IDENTIFY = b"I"  # I: flash the screen
+CMD_PING = b"P"  # P: heartbeat; the badge drops links that go quiet
+PING_INTERVAL_MS = 2000
+LINK_TIMEOUT_MS = 8000
+# Model upload: B, then D chunks of model.py source, then E<length>,<checksum>.
+# The badge saves it to /state and loads it; INFO then reports model=<checksum>.
+CMD_MODEL_BEGIN = b"B"
+CMD_MODEL_DATA = b"D"
+CMD_MODEL_END = b"E"
+CMD_MODEL_SHOW = b"M"  # M1 shows / M0 hides the model line on the badge (demo); persisted, upload re-shows
+CONTROL_MAX = 244  # control characteristic buffer on the badge
+
+
+def model_checksum(data):
+    return sum(data) & 0xFFFF
 
 
 def pack_samples(seq, samples):
