@@ -1,0 +1,66 @@
+[CmdletBinding()]
+param()
+
+$ErrorActionPreference = 'Stop'
+$python = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
+$race = Join-Path $PSScriptRoot 'race'
+
+if (-not (Test-Path -LiteralPath $python)) {
+    throw 'Create the virtual environment first: python -m venv .venv'
+}
+
+& $python -c 'import aiohttp; import bleak'
+if ($LASTEXITCODE -ne 0) {
+    throw 'Install the web server dependencies first: .\.venv\Scripts\python.exe -m pip install "aiohttp>=3.9" "bleak>=0.22"'
+}
+
+function Test-RacePage {
+    param([string]$Url, [string]$Title)
+
+    try {
+        $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 2
+    }
+    catch {
+        if ($null -ne $_.Exception.Response) {
+            throw
+        }
+        # Connection failures are expected while a server is starting.
+        return $false
+    }
+    if ($response.Content -notmatch [regex]::Escape("<title>$Title</title>")) {
+        throw "Another service is responding at $Url; stop it before starting Race."
+    }
+    return $true
+}
+
+$servers = @(
+    @{ Script = 'leaderboard.py'; Port = 8766; Title = 'Air-time leaderboard' }
+    @{ Script = 'race_rec.py'; Port = 8765; Title = 'Air-time recorder' }
+)
+
+foreach ($server in $servers) {
+    $url = "http://localhost:$($server.Port)"
+    if (Test-RacePage -Url $url -Title $server.Title) {
+        Write-Host "$($server.Title) is already running at $url"
+    }
+    else {
+        $process = Start-Process -FilePath $python `
+            -ArgumentList @('-u', $server.Script, '--no-browser') `
+            -WorkingDirectory $race -PassThru
+        $deadline = (Get-Date).AddSeconds(30)
+        while (-not (Test-RacePage -Url $url -Title $server.Title)) {
+            $process.Refresh()
+            if ($process.HasExited) {
+                throw "$($server.Script) exited with code $($process.ExitCode). Run it in a terminal to inspect its output."
+            }
+            if ((Get-Date) -ge $deadline) {
+                throw "$($server.Script) did not become ready at $url within 30 seconds. Check its console window."
+            }
+            Start-Sleep -Milliseconds 250
+        }
+        Write-Host "$($server.Title) started at $url (PID $($process.Id))"
+    }
+    Start-Process $url
+}
+
+Write-Host 'Leave the server consoles open. Press Ctrl+C in each console to stop it.'
