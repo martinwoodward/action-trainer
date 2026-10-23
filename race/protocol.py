@@ -160,6 +160,7 @@ PKT_STATUS = 0x53  # "S" badge -> server
 PKT_ACK = 0x41  # "A" server -> badge: "I heard you; send to me directly"
 PKT_CMD = 0x43  # "C" server -> badge: opcode byte + argument (CMD_*)
 PKT_REPLY = 0x52  # "R" badge -> server: echo of a CMD_PING argument
+PKT_PING = 0x50  # "P" badge -> server: "still there?"; answered at once with PKT_ACK
 
 CMD_PING = b"P"  # P<token>: badge echoes <token> in a PKT_REPLY
 
@@ -239,6 +240,10 @@ def pack_cmd(badge_id, op, arg=b""):
 
 def pack_reply(badge_id, arg):
     return _header(PKT_REPLY, badge_id) + arg
+
+
+def pack_ping(badge_id):
+    return _header(PKT_PING, badge_id)
 
 
 def unpack_payload(data):

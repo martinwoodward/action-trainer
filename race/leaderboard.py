@@ -209,6 +209,9 @@ class BadgeLink(asyncio.DatagramProtocol):
             if now - self.acked.get(badge_id, 0) >= ACK_EVERY_S:
                 self.acked[badge_id] = now
                 self.transport.sendto(protocol.pack_ack(raw_id), addr)
+        elif kind == protocol.PKT_PING:
+            self.addrs[badge_id] = addr
+            self.transport.sendto(protocol.pack_ack(raw_id), addr)
         elif kind == protocol.PKT_REPLY and self.on_reply:
             self.on_reply(badge_id, payload)
 

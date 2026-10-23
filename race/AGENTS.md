@@ -38,7 +38,9 @@ into Race). Deploy both with `tools/deploy_race.py` (`kiosk`, `app` or
   a scrolling chart of each badge's cumulative air time. The badge counts the
   ms per state and sends the totals in each status. The server acks badges
   (so they switch from broadcast to unicast) and sends commands: rename,
-  identify and ping. `leaderboard_state.json` holds the page-reset baselines
+  identify and ping. It also acks each badge `PKT_PING` at once; a badge pings
+  every 30 s and broadcasts again after three unanswered pings.
+  `leaderboard_state.json` holds the page-reset baselines
   (cleared when the badge reboots), the known badges and an hour of chart
   history. `tools/udp_latency.py` measures packet gaps and ping round trips.
 - The race app in this repo has **no BLE**: it talks Wi-Fi/UDP only, so
