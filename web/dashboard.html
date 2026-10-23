@@ -85,7 +85,7 @@
       <option value="3600">1 h</option>
     </select>
   </label>
-  <button id="sound" title="Play each plushie's sound while it is in the air">Sound off</button>
+  <button id="sound" title="Play each plushie's sound while it is in the air, and UGF when one is dropped">Sound off</button>
   <button id="resetall" class="danger">Reset all</button>
 </header>
 <main>
@@ -175,7 +175,7 @@ function card(b) {
   const since = b.totals ? (b.reset ? "since page reset" : "since badge reboot") : "no totals (old Airtime build)";
   const seen = b.online ? `${b.rssi} dBm` : `offline · ${Math.round(b.age)} s ago`;
   return `<div class="card surface${b.online ? "" : " offline"}" style="--c:${colour(b.badge_id)}">
-    <div class="top"><span class="name"><span class="swatch"></span><span class="pic" data-sound="${b.badge_id}" title="Play ${esc(b.name)}'s sound">${badgeIcon(b.name)}</span>${esc(b.name)}${b.online && b.state === "throw" ? '<span class="flying">In the air</span>' : ""}</span>
+    <div class="top"><span class="name"><span class="swatch"></span><span class="pic" data-sound="${b.badge_id}" title="Play ${esc(b.name)}'s sound (Shift-click: its drop sound)">${badgeIcon(b.name)}</span>${esc(b.name)}${b.online && b.state === "throw" ? '<span class="flying">In the air</span>' : ""}</span>
       <span class="meta">${b.badge_id}</span></div>
     <div class="air"><b data-air="${b.badge_id}">${air}</b><small>air time</small></div>
     <div class="bottom"><span class="meta">${since} · ${seen}</span>
@@ -230,6 +230,37 @@ function wheee(t, id, out = master) {
   const base = 380 + (parseInt(id, 16) % 7) * 45;
   note(t, 0.5, [[0, base], [0.35, base * 3], [0.5, base * 2.6]], {type: "triangle", vol: 0.25, out});
 }
+// White noise for breathy sounds; one second, made once.
+let noiseBuf;
+function noise(t, dur, {filter = 3500, q = 1.2, vol = 0.2, out: dest = master} = {}) {
+  const a = ctx();
+  if (!noiseBuf) {
+    noiseBuf = a.createBuffer(1, a.sampleRate, a.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  const src = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
+  src.buffer = noiseBuf;
+  f.type = "bandpass"; f.frequency.value = filter; f.Q.value = q;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(f); f.connect(g); g.connect(dest);
+  src.start(t); src.stop(t + dur + 0.02);
+}
+// A dropped plushie says "UGF!": a thud, a falling "uh" grunt and a breathy
+// "f". Pitched a little per badge so drops at once can be told apart.
+function ugf(t, id) {
+  const k = 0.85 + (parseInt(id, 16) % 7) * 0.05;
+  note(t, 0.14, [[0, 130 * k], [0.12, 48 * k]], {vol: 0.5});
+  note(t + 0.03, 0.24, [[0, 200 * k], [0.08, 175 * k], [0.24, 115 * k]], {type: "sawtooth", vol: 0.35, filter: 620});
+  note(t + 0.03, 0.22, [[0, 400 * k], [0.22, 240 * k]], {type: "sawtooth", vol: 0.12, filter: 1100});
+  noise(t + 0.2, 0.18, {filter: 3200, q: 0.8, vol: 0.7});
+}
+function oof(b) {
+  if (!audio && !soundOn) return;
+  ugf(ctx().currentTime + 0.02, b.badge_id);
+}
 function soundOf(b) {
   const key = String(b.name).toLowerCase(), s = SOUNDS.find(([k]) => key.includes(k));
   return s ? {play: s[1], period: s[2]} : {play: (t, out) => wheee(t, b.badge_id, out), period: 0.55};
@@ -275,9 +306,16 @@ function showSound() {
 
 // A badge in the throw state loops its sound. A lost datagram can hide a short
 // flight, so a rise in air time while not flying plays the sound once.
+// A change in a badge's drop counter on the same boot plays "UGF" once; badges
+// without the counter (old builds) use the switch into the drop state instead.
 const flight = {};       // badge_id -> {flying, air, at}
+const dropSeen = {};     // badge_id -> {boot, drops, state}
 function listen(status) {
   for (const b of status.badges) {
+    const d = dropSeen[b.badge_id];
+    if (d && soundOn && b.online && d.boot === b.boot &&
+        (b.drops != null ? d.drops != null && b.drops !== d.drops : b.state === "drop" && d.state !== "drop")) oof(b);
+    dropSeen[b.badge_id] = {boot: b.boot, drops: b.drops, state: b.state};
     const was = flight[b.badge_id], air = b.totals ? b.totals.throw : 0;
     const flying = b.online && b.state === "throw";
     const now = Date.now();
@@ -421,7 +459,7 @@ $("grid").onclick = e => {
     if (name && name !== old) send({op: "rename", badge_id: r.dataset.rename, name});
   }
   const p = e.target.closest("[data-sound]");
-  if (p) { const badge = badges.find(x => x.badge_id === p.dataset.sound); ctx(); if (badge) delight(badge); showSound(); }
+  if (p) { const badge = badges.find(x => x.badge_id === p.dataset.sound); ctx(); if (badge) (e.shiftKey ? oof : delight)(badge); showSound(); }
 };
 $("sound").onclick = () => {
   soundOn = !soundOn;

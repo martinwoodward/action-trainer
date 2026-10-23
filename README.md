@@ -181,8 +181,11 @@ delight for as long as a plushie is in the air: a rubber-duck squeak for Duckie,
 chitter for Squirrel, a sparkly arpeggio for Copilot, bubble bloops for Mona,
 and a "wheee" for anyone else. Each sound repeats until its plushie lands, and
 plushies in the air together are heard together. A flight too short to be
-reported still plays its sound once. Click a badge's picture on its card to hear its
-sound. The sounds are synthesised in the page with Web Audio; browsers only
+reported still plays its sound once. When a badge reports a drop (its drop
+counter goes up), the page plays one short "UGF!" (a thud, a grunt and a
+breath), pitched a little differently per plushie; it plays once per drop,
+however long the badge shows DROPPED. Click a badge's picture on its card to
+hear its sound, or Shift-click it to hear its UGF. The sounds are synthesised in the page with Web Audio; browsers only
 allow sound after a click on the page.
 
 The page uses the light theme of [badger.github.io](https://badger.github.io/)

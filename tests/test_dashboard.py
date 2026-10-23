@@ -76,6 +76,7 @@ class BadgeLinkTests(unittest.TestCase):
         badge = self.dash.snapshot()["badges"][0]
         self.assertEqual((badge["name"], badge["state"], badge["rssi"]), ("Copilot", "throw", -54))
         self.assertEqual(badge["totals"], {"still": 900, "throw": 650, "drop": 0})
+        self.assertEqual(badge["drops"], 2)  # the page plays UGF when this changes
         self.assertTrue(self.heard.is_set())
         self.assertEqual(self.transport.sent, [(protocol.pack_ack(0xC03CFD52), addr)])  # once per ACK_EVERY_S
 

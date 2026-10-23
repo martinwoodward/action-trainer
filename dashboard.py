@@ -72,7 +72,8 @@ class Dashboard:
         now = time.time() if now is None else now
         badge_id = "%08x" % mfg["badge_id"]
         rec = self.badges.setdefault(badge_id, {"badge_id": badge_id, "totals": None, "boot": None})
-        rec.update(address=address, rssi=rssi, seen=now, state=STATE_BY_CODE.get(mfg["state"], "still"))
+        rec.update(address=address, rssi=rssi, seen=now, state=STATE_BY_CODE.get(mfg["state"], "still"),
+                   drops=mfg.get("drops"))
         if name:
             rec["name"] = name
         rec.setdefault("name", "badge-" + badge_id[-4:])
@@ -90,7 +91,8 @@ class Dashboard:
 
     def observe_status(self, address, status, now=None):
         """Apply one UDP status datagram (protocol.unpack_status output)."""
-        mfg = {"badge_id": status["badge_id"], "boot": status["boot"], "state": status["state"]}
+        mfg = {"badge_id": status["badge_id"], "boot": status["boot"], "state": status["state"],
+               "drops": status["drops"]}
         stats = {k: status[k] for k in ("boot", "still_ms", "throw_ms", "drop_ms")}
         self.observe(address, status["name"] or None, status["rssi"], mfg, stats, now)
 
@@ -163,6 +165,7 @@ class Dashboard:
                     "name": rec["name"],
                     "state": rec["state"],
                     "boot": rec["boot"],
+                    "drops": rec.get("drops"),  # 8-bit, wraps; the page plays UGF when it changes
                     "rssi": rec["rssi"],
                     "age": round(now - rec["seen"], 1),
                     "seen": int(rec["seen"] * 1000),
