@@ -222,6 +222,7 @@ class Net:
         self.error = None
         self.server = None  # where statuses go; None = broadcast (auto discovery)
         self.server_heard = 0
+        self.heard_any = False  # server_heard is meaningful only once something answered
         self.throw_offset_ms = None  # throw_ms at the leaderboard's last reset, from its acks
         self._ping_at = 0
         self._ping_first = 0
@@ -409,6 +410,7 @@ class Net:
                 if server != self.server:
                     self._use_server(server, now)
                 self.server_heard = now
+                self.heard_any = True
             if kind == protocol.PKT_CMD and payload:
                 self._command(now, payload[:1], payload[1:], addr)
 
@@ -442,8 +444,19 @@ class Net:
 
     def label(self):
         if self.sock is not None:
-            return "WiFi %s%s" % (self.ip, "" if self.server else " bc")
+            return "Me " + self.ip
         return "WiFi %s" % (self.error or "...")
+
+    def server_label(self, now):
+        """Where statuses go (the server's IP, or "broadcast" while searching)
+        and how long since the leaderboard last answered."""
+        if self.sock is None:
+            return ""
+        where = "Srv " + (self.server[0] if self.server else "broadcast")
+        if not self.heard_any:
+            return where
+        sec = max(0, now - self.server_heard) // 1000
+        return "%s %s" % (where, "%ds" % sec if sec < 120 else "%dm" % (sec // 60))
 
 
 def load_net_config():
@@ -700,7 +713,7 @@ def draw():
     screen.font = LABEL_FONT
     screen.text("LIFETIME" if offset is None else "AIR TIME", 16, 68)
     if offset is not None:
-        screen.text("LIFETIME " + fmt_air(lifetime), 16, 84)
+        screen.text("LIFETIME " + fmt_air(lifetime), 16, 80)
 
     shown = shown_state()
     if shown == THROW:
@@ -708,13 +721,15 @@ def draw():
     elif shown == DROP:
         pill("DROPPED", DROP_RGB, screen.width - 6, 66)
 
-    # Footer: counts and the Wi-Fi link, muted like the card's meta line.
+    # Footer, muted like the card's meta line: counts and this badge's IP,
+    # then the leaderboard's IP (or "broadcast") and seconds since it answered.
     pen(MUTED)
     screen.font = LABEL_FONT
-    screen.text("T%d D%d" % (detector.throws, detector.drops), 6, screen.height - 16)
+    screen.text("T%d D%d" % (detector.throws, detector.drops), 6, screen.height - 26)
     link_text = link.label()
     w, _ = screen.measure_text(link_text)
-    screen.text(link_text, screen.width - int(w) - 6, screen.height - 16)
+    screen.text(link_text, screen.width - int(w) - 6, screen.height - 26)
+    screen.text(link.server_label(now), 6, screen.height - 13)
     if model is None:
         pill("NO MODEL", DROP_RGB, screen.width - 6, 88)
 

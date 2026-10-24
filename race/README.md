@@ -242,7 +242,9 @@ python leaderboard.py              # http://localhost:8766
   lifetime totals minus that offset. Offsets survive badge reboots and
   leaderboard restarts. Each ack tells the badge its air-time offset, so the
   badge screen shows air time since the last reset with its lifetime total
-  below. **Reset all** also clears the chart history, on the server and in
+  below. Its footer shows the throw and drop counts, the badge's IP (`Me`), and the
+  leaderboard's IP (`Srv`, or `Srv broadcast` while it searches) with the
+  seconds since the leaderboard last answered. **Reset all** also clears the chart history, on the server and in
   every open page.
 - **Out of range:** a badge that goes quiet greys out after 5 s. When it
   returns, its line continues from where it left off. Because the badge kept
