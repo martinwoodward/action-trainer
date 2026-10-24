@@ -159,6 +159,15 @@ class LeaderboardTests(unittest.TestCase):
                                    ' "b": {"ms": {"still": 1, "throw": 2, "drop": 3}}}}', encoding="utf-8")
         self.assertEqual(list(Leaderboard(self.state_file).baselines), ["b"])
 
+    def test_legacy_cached_totals_are_not_used_as_offsets(self):
+        self.state_file.write_text('{"badges": {"c03cfd52": {"badge_id": "c03cfd52", "name": "b1", "boot": 3,'
+                                   ' "totals": {"still": 1, "throw": 60000, "drop": 0}, "seen": 0, "rssi": -50,'
+                                   ' "state": "still"}}}', encoding="utf-8")
+        dash = Leaderboard(self.state_file)
+        self.assertFalse(dash.reset("c03cfd52"))  # nothing to reset until a v3 report arrives
+        dash.observe("A", "b1", -50, mfg(1), stats(1, 1000, 2000), now=100.0)
+        self.assertEqual(dash.snapshot(now=100.0)["badges"][0]["totals"]["throw"], 2000)
+
     def test_reset_all_zeros_every_badge_and_persists(self):
         self.dash.observe("A", "b1", -50, mfg(3), stats(3, 1000, 800), now=100.0)
         self.dash.reset_all()

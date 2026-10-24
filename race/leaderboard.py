@@ -53,10 +53,14 @@ class Leaderboard:
             # Baselines with a "boot" are from per-boot badge totals; they don't match lifetime ones.
             self.baselines = {k: v for k, v in saved.get("baselines", {}).items() if "boot" not in v}
             self.badges = saved.get("badges", {})
+            if saved.get("udp_version") != protocol.UDP_VERSION:
+                # Cached totals from older builds were per boot; a reset must wait for a lifetime report.
+                for rec in self.badges.values():
+                    rec["totals"] = None
 
     def save(self):
         if self.state_file:
-            data = {"baselines": self.baselines, "badges": self.badges}
+            data = {"udp_version": protocol.UDP_VERSION, "baselines": self.baselines, "badges": self.badges}
             tmp = self.state_file.with_suffix(".tmp")
             tmp.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
             tmp.replace(self.state_file)

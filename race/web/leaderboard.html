@@ -145,7 +145,7 @@ const liveAir = (b, now) => b.totals.throw + extra(b, now);
 
 function card(b) {
   const air = b.totals ? fmt(liveAir(b, Date.now())) : "–";
-  const since = !b.totals ? "no totals (old badge build)"
+  const since = !b.totals ? "no totals yet"
     : b.reset && b.lifetime ? `since page reset · lifetime ${fmt(b.lifetime.throw + extra(b, Date.now()))}` : "lifetime";
   const seen = b.online ? `${b.rssi} dBm` : `offline · ${Math.round(b.age)} s ago`;
   return `<div class="card surface${b.online ? "" : " offline"}" style="--c:${colour(b.badge_id)}">
@@ -331,9 +331,12 @@ function draw() {
   for (const b of badges) if (extra(b, now)) { const el = document.querySelector(`[data-air="${b.badge_id}"]`); if (el) el.textContent = fmt(liveAir(b, now)); }
 
   g.font = `600 13px ${SANS}`;
-  const nameW = Math.max(0, ...badges.map(b => g.measureText(b.name).width));
-  // Names on the left; room on the right for the icon and the value.
-  const L = 24 + nameW + 14, R = 24 + 44 + 84, T = 40, B = 16, pw = W - L - R, ph = H - T - B;
+  // Names on the left; room on the right for the icon and the value. Both are
+  // capped so narrow screens keep most of the width for the bars.
+  const nameW = Math.min(Math.max(0, ...badges.map(b => g.measureText(b.name).width)), W * 0.22);
+  const k = W < 480 ? 0.65 : 1;  // smaller icon and value on narrow screens
+  const L = 24 + nameW + 14, R = (24 + 44 + 84) * k, T = 40, B = 16;
+  const pw = Math.max(20, W - L - R), ph = H - T - B;
   g.font = `500 11px ${MONO}`; g.fillStyle = INK.muted; g.textAlign = "left"; g.textBaseline = "top";
   g.fillText("TOTAL AIR TIME", 24, 14);
 
@@ -376,16 +379,16 @@ function draw() {
     g.beginPath(); g.roundRect(L, y - barH / 2, w, barH, [0, 6, 6, 0]); g.fill();
     const icon = namesake(b.name);
     if (icon && icon.img) {
-      if (icon.img.complete) g.drawImage(icon.img, end + 6, y - 18, 36, 36);
+      if (icon.img.complete) g.drawImage(icon.img, end + 6 * k, y - 18 * k, 36 * k, 36 * k);
     } else if (icon) {
-      g.font = `30px ${EMOJI_FONT}`; g.textAlign = "center"; g.textBaseline = "middle";
-      g.fillText(icon, end + 24, y);
+      g.font = `${30 * k}px ${EMOJI_FONT}`; g.textAlign = "center"; g.textBaseline = "middle";
+      g.fillText(icon, end + 24 * k, y);
     } else {
-      g.beginPath(); g.arc(end + 24, y, 8, 0, 7); g.fill();
+      g.beginPath(); g.arc(end + 24 * k, y, 8 * k, 0, 7); g.fill();
     }
     g.fillStyle = INK.text; g.textBaseline = "middle";
-    g.textAlign = "left"; g.font = `600 14px ${MONO}`; g.fillText(fmt(a.h), end + 48, y);
-    g.textAlign = "right"; g.font = `600 13px ${SANS}`; g.fillText(b.name, L - 14, y);
+    g.textAlign = "left"; g.font = `600 ${14 * k}px ${MONO}`; g.fillText(fmt(a.h), end + 48 * k, y);
+    g.textAlign = "right"; g.font = `600 13px ${SANS}`; g.fillText(b.name, L - 14, y, nameW);
   }
   g.globalAlpha = 1;
   requestAnimationFrame(draw);

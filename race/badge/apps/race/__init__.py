@@ -96,6 +96,7 @@ PING_EVERY_MS = 30000  # check the leaderboard is still there this often
 PING_WAIT_MS = 1000  # wait this long for its ack before trying again
 PING_TRIES = 3  # unanswered pings before going back to broadcast discovery
 SAVE_EVERY_MS = 60000  # lifetime totals are also saved on every landing
+SAVE_RETRY_MS = 5000  # after a failed write
 IDENTIFY_MS = 1200  # Find on the leaderboard blinks the screen this long
 NET_CONFIG = "/state/airtime_net.json"  # {"ssid", "password", "server"}; written by deploy_race.py
 
@@ -509,11 +510,12 @@ def save_totals(now):
     if totals == _last_save["totals"]:
         return
     state_store["totals"] = totals
-    _last_save["totals"] = dict(totals)
     try:
         State.save("airtime", state_store)
     except OSError:
-        pass
+        _last_save["at"] = now - SAVE_EVERY_MS + SAVE_RETRY_MS  # try again soon
+        return
+    _last_save["totals"] = dict(totals)
 # Heuristic-detector states (no model loaded) folded into the model's three.
 STATE_BUCKET = {FLYING: THROW, THROW: THROW, DROP: DROP}
 
