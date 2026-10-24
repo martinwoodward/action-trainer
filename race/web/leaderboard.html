@@ -174,7 +174,8 @@ const liveAir = (b, now) => b.totals.throw + extra(b, now);
 
 function card(b) {
   const air = b.totals ? fmt(liveAir(b, Date.now())) : "–";
-  const since = b.totals ? (b.reset ? "since page reset" : "since badge reboot") : "no totals (old badge build)";
+  const since = !b.totals ? "no totals (old badge build)"
+    : b.reset && b.lifetime ? `since page reset · lifetime ${fmt(b.lifetime.throw + extra(b, Date.now()))}` : "lifetime";
   const seen = b.online ? `${b.rssi} dBm` : `offline · ${Math.round(b.age)} s ago`;
   return `<div class="card surface${b.online ? "" : " offline"}" style="--c:${colour(b.badge_id)}">
     <div class="top"><span class="name"><span class="swatch"></span><span class="pic" data-sound="${b.badge_id}" title="Play ${esc(b.name)}'s sound (Shift-click: its drop sound)">${badgeIcon(b.name)}</span>${esc(b.name)}${b.online && b.state === "throw" ? '<span class="flying">In the air</span>' : ""}</span>

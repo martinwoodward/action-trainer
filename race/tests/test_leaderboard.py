@@ -40,6 +40,20 @@ class UdpFormatTests(unittest.TestCase):
         self.assertEqual((st["still_ms"], st["throw_ms"], st["drop_ms"]), (123456, 789, 42))
         self.assertEqual((st["air_total_ms"], st["throws"], st["rssi"], st["name"]), (5000, 7, -54, "Copilot"))
 
+    def test_lifetime_totals_do_not_wrap(self):
+        big = 5 * 2**32 + 7  # far past uint32 ms (49.7 days)
+        packet = protocol.pack_status(1, 300, 1, 0, 0, big, big, 70000, 2**31, 2**20,
+                                      big, big + 1, big + 2, -40, "x")
+        st = protocol.unpack_status(packet)
+        self.assertEqual((st["still_ms"], st["throw_ms"], st["drop_ms"], st["air_total_ms"]),
+                         (big, big + 1, big + 2, big))
+        self.assertEqual((st["boot"], st["drops"], st["throws"], st["steps"]), (300, 70000, 2**31, 2**20))
+
+    def test_ack_carries_the_reset_offset(self):
+        kind, badge_id, payload = protocol.unpack_payload(protocol.pack_ack(9, 2**33))
+        self.assertEqual((kind, badge_id, protocol.unpack_ack(payload)), (protocol.PKT_ACK, 9, 2**33))
+        self.assertEqual(protocol.unpack_ack(b""), 0)
+
     def test_name_is_truncated_and_bad_packets_rejected(self):
         st = protocol.unpack_status(status_packet(name="a-very-long-badge-name"))
         self.assertEqual(st["name"], "a-very-long-badg")
@@ -87,6 +101,14 @@ class BadgeLinkTests(unittest.TestCase):
         self.link.datagram_received(protocol.pack_ping(0xC03CFD52), addr)
         self.assertEqual(self.transport.sent, [(protocol.pack_ack(0xC03CFD52), addr)] * 3)
 
+    def test_acks_carry_the_offset_after_a_reset(self):
+        addr = ("192.168.9.208", 47217)
+        self.assertFalse(self.link.ack("c03cfd52"))  # never heard
+        self.link.datagram_received(status_packet(throw=600), addr)
+        self.dash.reset("c03cfd52")
+        self.assertTrue(self.link.ack("c03cfd52"))
+        self.assertEqual(self.transport.sent[-1], (protocol.pack_ack(0xC03CFD52, 600), addr))
+
     def test_commands_go_to_the_last_address_and_replies_are_routed(self):
         self.assertFalse(self.link.command("c03cfd52", protocol.CMD_IDENTIFY))  # never heard
         self.link.datagram_received(status_packet(), ("10.0.0.5", 5000))
@@ -119,15 +141,24 @@ class LeaderboardTests(unittest.TestCase):
         restarted.observe("A", "b1", -50, mfg(3), stats(3, 12000, 1500, 2000), now=100.0)
         self.assertEqual(restarted.snapshot(now=100.0)["badges"][0]["totals"]["still"], 2000)
 
-    def test_reboot_clears_page_reset_and_old_totals(self):
-        self.dash.observe("A", "b1", -50, mfg(3), stats(3, 10000), now=100.0)
+    def test_reboot_keeps_page_reset_and_lifetime(self):
+        self.dash.observe("A", "b1", -50, mfg(3), stats(3, 10000, 500), now=100.0)
         self.dash.reset("c03cfd52")
-        # New boot, but the scan response still carries the previous boot's totals.
-        self.dash.observe("A", "b1", -50, mfg(4), stats(3, 10000), now=100.0)
-        self.assertIsNone(self.totals())
-        self.dash.observe("A", "b1", -50, mfg(4), stats(4, 300), now=100.0)
-        self.assertEqual(self.totals(), {"still": 300, "throw": 0, "drop": 0})
-        self.assertNotIn("c03cfd52", Leaderboard(self.state_file).baselines)
+        self.dash.observe("A", "b1", -50, mfg(4), stats(4, 10300, 900), now=100.0)  # rebooted; totals kept growing
+        self.assertEqual(self.totals(), {"still": 300, "throw": 400, "drop": 0})
+        self.assertEqual(self.dash.snapshot(now=100.0)["badges"][0]["lifetime"]["throw"], 900)
+        self.assertIn("c03cfd52", Leaderboard(self.state_file).baselines)
+
+    def test_power_cut_rollback_is_clamped(self):
+        self.dash.observe("A", "b1", -50, mfg(3), stats(3, 10000, 500), now=100.0)
+        self.dash.reset("c03cfd52")
+        self.dash.observe("A", "b1", -50, mfg(4), stats(4, 9500, 500), now=100.0)  # lost unsaved still time
+        self.assertEqual(self.totals(), {"still": 0, "throw": 0, "drop": 0})
+
+    def test_old_per_boot_baselines_are_dropped(self):
+        self.state_file.write_text('{"baselines": {"a": {"boot": 3, "ms": {"still": 1, "throw": 2, "drop": 3}},'
+                                   ' "b": {"ms": {"still": 1, "throw": 2, "drop": 3}}}}', encoding="utf-8")
+        self.assertEqual(list(Leaderboard(self.state_file).baselines), ["b"])
 
     def test_history_samples_air_time_and_collapses_flat_runs(self):
         for i, throw in enumerate([0, 0, 0, 800, 800]):

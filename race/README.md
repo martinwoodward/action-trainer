@@ -233,11 +233,17 @@ python leaderboard.py              # http://localhost:8766
 - **Rename and Find:** each card has **Rename**, which saves the new name on
   the badge, and **Find**, which flashes the badge's screen. Both are enabled
   while the badge is online.
-- **Resets:** a badge reboot zeroes its counters. **Reset** on the page (per
-  badge or **Reset all**) stores a baseline in `leaderboard_state.json`, and the
-  times shown are counted from that baseline. A restart of the leaderboard keeps
-  the baselines. The next reboot of that badge clears its baseline. **Reset
-  all** also clears the chart history, on the server and in every open page.
+- **Resets:** badges never reset their counters. Each badge saves its lifetime
+  totals to `/state` on every landing and every 60 s, so a reboot carries on
+  from where it was; a power cut loses at most 60 s of still time. Times are
+  sent as 64-bit milliseconds and counts as 32-bit, so they don't wrap.
+  **Reset** on the page (per badge or **Reset all**) records the badge's latest
+  totals as an offset in `leaderboard_state.json`, and the times shown are the
+  lifetime totals minus that offset. Offsets survive badge reboots and
+  leaderboard restarts. Each ack tells the badge its air-time offset, so the
+  badge screen shows air time since the last reset with its lifetime total
+  below. **Reset all** also clears the chart history, on the server and in
+  every open page.
 - **Out of range:** a badge that goes quiet greys out after 5 s. When it
   returns, its line continues from where it left off. Because the badge kept
   counting, the jump across the gap is drawn as a dashed straight line.

@@ -7,6 +7,10 @@ until a leaderboard acks. Every 30 s it pings the leaderboard; if three pings
 go unanswered it broadcasts again until a leaderboard acks. The leaderboard can rename the badge, flash its screen
 and ping it. This build has no Bluetooth, so the recorder can't connect.
 
+Totals are lifetime values, saved in /state on every landing and every 60 s,
+so they never reset. The leaderboard's acks carry the air time at its last
+reset; the screen shows air time since then, with the lifetime total below.
+
 The app shows the generated model's state (still / throw / drop) and has no
 exit: on a kiosk badge (`badge/main.py`) it is the only thing that runs.
 
@@ -91,6 +95,7 @@ WIFI_JOIN_TIMEOUT_MS = 20000
 PING_EVERY_MS = 30000  # check the leaderboard is still there this often
 PING_WAIT_MS = 1000  # wait this long for its ack before trying again
 PING_TRIES = 3  # unanswered pings before going back to broadcast discovery
+SAVE_EVERY_MS = 60000  # lifetime totals are also saved on every landing
 IDENTIFY_MS = 1200  # Find on the leaderboard blinks the screen this long
 NET_CONFIG = "/state/airtime_net.json"  # {"ssid", "password", "server"}; written by deploy_race.py
 
@@ -102,8 +107,13 @@ if not state_store.get("name"):
     state_store["name"] = "badge-%04x" % (badge_id & 0xFFFF)
 badge_name = state_store["name"]
 
-boot_count = state_store.get("boot", 0) + 1
-state_store["boot"] = boot_count & 0xFF
+boot_count = (state_store.get("boot", 0) + 1) & 0xFFFF
+state_store["boot"] = boot_count
+# Lifetime totals: they survive reboots and only ever grow. The leaderboard
+# shows them minus the totals at its last reset.
+TOTAL_KEYS = ("still", "throw", "drop", "throws", "drops", "steps", "air")
+saved_totals = state_store.get("totals") or {}
+state_store["totals"] = {k: int(saved_totals.get(k, 0)) for k in TOTAL_KEYS}
 State.save("airtime", state_store)
 
 
@@ -113,11 +123,12 @@ class Detector:
     def __init__(self):
         self.state = STILL
         self.flight_ms = 0
-        self.air_total_ms = 0
-        self.air_at_reset_ms = 0
-        self.throws = 0
-        self.drops = 0
-        self.steps = 0
+        saved = state_store["totals"]
+        self.air_total_ms = saved["air"]
+        self.air_at_reset_ms = self.air_total_ms
+        self.throws = saved["throws"]
+        self.drops = saved["drops"]
+        self.steps = saved["steps"]
         self._freefall_ms = 0
         self._still_ms = 0
         self._peak_g = 1.0
@@ -149,11 +160,11 @@ class Detector:
                 self.flight_ms = self._freefall_ms
                 self.air_total_ms += self.flight_ms
                 if self._peak_g >= LAUNCH_G:
-                    self.throws = (self.throws + 1) & 0xFF
+                    self.throws += 1
                     self._event_state = THROW
                     events |= EV_THROW
                 else:
-                    self.drops = (self.drops + 1) & 0xFF
+                    self.drops += 1
                     self._event_state = DROP
                     events |= EV_DROP
                 self._event_until = now + EVENT_SHOW_MS
@@ -164,7 +175,7 @@ class Detector:
         if self._step_armed and g < STEP_LOW_G and now - self._last_step >= STEP_MIN_MS:
             self._step_armed = False
             self._last_step = now
-            self.steps = (self.steps + 1) & 0xFFFF
+            self.steps += 1
             self._recent_steps.append(now)
             events |= EV_STEP
         elif g > STEP_HIGH_G:
@@ -211,6 +222,7 @@ class Net:
         self.error = None
         self.server = None  # where statuses go; None = broadcast (auto discovery)
         self.server_heard = 0
+        self.throw_offset_ms = None  # throw_ms at the leaderboard's last reset, from its acks
         self._ping_at = 0
         self._ping_first = 0
         self._ping_last = 0
@@ -390,6 +402,8 @@ class Net:
             if msg is None or msg[1] != badge_id:
                 continue
             kind, _, payload = msg
+            if kind == protocol.PKT_ACK:
+                self.throw_offset_ms = protocol.unpack_ack(payload)
             if kind in (protocol.PKT_ACK, protocol.PKT_CMD):
                 server = (addr[0], protocol.UDP_PORT)
                 if server != self.server:
@@ -467,8 +481,26 @@ class Classifier:
 MODEL_STATES = {"still": STILL, "throw": THROW, "drop": DROP}
 
 
-# Milliseconds in each model state since boot, advertised in the scan response.
-state_ms = {STILL: 0, THROW: 0, DROP: 0}
+# Lifetime milliseconds in each model state, sent in every status.
+_saved = state_store["totals"]
+state_ms = {STILL: _saved["still"], THROW: _saved["throw"], DROP: _saved["drop"]}
+_last_save = {"at": 0, "totals": dict(_saved)}
+
+
+def save_totals(now):
+    """Write the lifetime totals to flash, if they changed since the last write."""
+    d = detector
+    totals = {"still": state_ms[STILL], "throw": state_ms[THROW], "drop": state_ms[DROP],
+              "throws": d.throws, "drops": d.drops, "steps": d.steps, "air": d.air_total_ms}
+    _last_save["at"] = now
+    if totals == _last_save["totals"]:
+        return
+    state_store["totals"] = totals
+    _last_save["totals"] = dict(totals)
+    try:
+        State.save("airtime", state_store)
+    except OSError:
+        pass
 # Heuristic-detector states (no model loaded) folded into the model's three.
 STATE_BUCKET = {FLYING: THROW, THROW: THROW, DROP: DROP}
 
@@ -617,6 +649,7 @@ def draw_battery(right, top):
 
 
 last_g = 1.0
+_last_bucket = [STILL]
 
 
 def draw():
@@ -653,15 +686,21 @@ def draw():
         shown_name += ".."
     screen.text(shown_name, x, 17 - int(h) // 2)
 
-    # Air time since the badge started, with the card's colour bar.
+    # Air time since the leaderboard's last reset, with the card's colour bar,
+    # and the lifetime total below. Without a leaderboard offset yet, only
+    # the lifetime total is known.
+    lifetime = state_ms[THROW]
+    offset = link.throw_offset_ms
     pen(rgb)
     screen.rectangle(8, 40, 2, 42)
     pen(INK)
     screen.font = AIR_FONT
-    screen.text(fmt_air(state_ms[THROW]), 16, 42)
+    screen.text(fmt_air(lifetime if offset is None else max(0, lifetime - offset)), 16, 42)
     pen(MUTED)
     screen.font = LABEL_FONT
-    screen.text("AIR TIME", 16, 68)
+    screen.text("LIFETIME" if offset is None else "AIR TIME", 16, 68)
+    if offset is not None:
+        screen.text("LIFETIME " + fmt_air(lifetime), 16, 84)
 
     shown = shown_state()
     if shown == THROW:
@@ -686,11 +725,15 @@ def update():
     now = badge.ticks
     dt = badge.ticks_delta
     ax, ay, az, gx, gy, gz = badge.imu()
-    _, last_g = detector.update(now, dt, ax, ay, az, gx, gy, gz)
+    events, last_g = detector.update(now, dt, ax, ay, az, gx, gy, gz)
     classifier.update(now, (ax, ay, az, gx, gy, gz))
     shown = shown_state()
     bucket = STATE_BUCKET.get(shown, STILL)
     state_ms[bucket] += dt
+    if events & EV_LAND or (bucket != _last_bucket[0] and _last_bucket[0] != STILL) \
+            or now - _last_save["at"] >= SAVE_EVERY_MS:
+        save_totals(now)  # a landing: air time just changed
+    _last_bucket[0] = bucket
     link.service(now)
 
     # No exit: handling the plushy brushes the capacitive pads, and the badge

@@ -2,10 +2,12 @@
 
 Badges report over Wi-Fi: each sends a UDP status datagram
 (protocol.pack_status) to UDP port protocol.UDP_PORT on every state change and
-every 250 ms, with its milliseconds in still / throw / drop since boot. The
-leaderboard acks each badge (so broadcasting badges learn where it is) and can
-rename, identify and ping badges. The page can also zero a badge; that stores
-a baseline here, which a badge reboot clears.
+every 250 ms, with its lifetime milliseconds in still / throw / drop. Badges
+save these across reboots, so they only ever grow. The leaderboard acks each
+badge (so broadcasting badges learn where it is) and can rename, identify and
+ping badges. Resetting a badge on the page records its latest totals as an
+offset; shown values are the lifetime totals minus that offset. Acks carry the
+air-time offset so the badge can show its since-reset air time too.
 
 Usage:  python leaderboard.py [--port 8766] [--udp-port 47217] [--no-browser]
 """
@@ -38,7 +40,7 @@ class Leaderboard:
     def __init__(self, state_file=STATE_FILE):
         self.state_file = state_file
         self.badges = {}  # badge_id -> record
-        # badge_id -> {"boot": n, "ms": {state: ms}}; totals at the page reset
+        # badge_id -> {"ms": {state: ms}}: lifetime totals at the page reset
         self.baselines = {}
         # badge_id -> [[epoch_ms, air_ms], ...]: shown air time when an advert arrived
         self.history = {}
@@ -52,7 +54,8 @@ class Leaderboard:
                 saved = json.loads(self.state_file.read_text(encoding="utf-8"))
             except ValueError:
                 return
-            self.baselines = saved.get("baselines", {})
+            # Baselines with a "boot" are from per-boot badge totals; they don't match lifetime ones.
+            self.baselines = {k: v for k, v in saved.get("baselines", {}).items() if "boot" not in v}
             self.badges = saved.get("badges", {})
             self.history = saved.get("history", {})
             self.cleared_ms = saved.get("cleared_ms", 0)
@@ -77,17 +80,9 @@ class Leaderboard:
         if name:
             rec["name"] = name
         rec.setdefault("name", "badge-" + badge_id[-4:])
-        if rec["boot"] is not None and rec["boot"] != mfg["boot"]:
-            rec["totals"] = None  # rebooted: totals from the old boot no longer apply
         rec["boot"] = mfg["boot"]
-        # Only trust totals that belong to the current boot (a BLE scan
-        # response could lag the advert across a reboot).
         if stats is not None and stats["boot"] == mfg["boot"]:
             rec["totals"] = {s: stats[s + "_ms"] for s in STATES}
-        base = self.baselines.get(badge_id)
-        if base is not None and base["boot"] != mfg["boot"]:
-            del self.baselines[badge_id]  # the reboot already zeroed the badge
-            self.save()
 
     def observe_status(self, address, status, now=None):
         """Apply one UDP status datagram (protocol.unpack_status output)."""
@@ -101,15 +96,21 @@ class Leaderboard:
         if rec["totals"] is None:
             return None
         base = self.baselines.get(badge_id)
-        if base is None or base["boot"] != rec["boot"]:
+        if base is None:
             return dict(rec["totals"])
+        # Clamped: a power cut can roll a badge back by up to a minute of still time.
         return {s: max(0, rec["totals"][s] - base["ms"][s]) for s in STATES}
+
+    def offset_ms(self, badge_id):
+        """Throw ms at the badge's last reset, sent to it in each ack."""
+        base = self.baselines.get(badge_id)
+        return base["ms"]["throw"] if base else 0
 
     def reset(self, badge_id):
         rec = self.badges.get(badge_id)
         if rec is None or rec["totals"] is None:
             return False
-        self.baselines[badge_id] = {"boot": rec["boot"], "ms": dict(rec["totals"])}
+        self.baselines[badge_id] = {"ms": dict(rec["totals"])}
         self.save()
         return True
 
@@ -165,12 +166,13 @@ class Leaderboard:
                     "name": rec["name"],
                     "state": rec["state"],
                     "boot": rec["boot"],
-                    "drops": rec.get("drops"),  # 8-bit, wraps; the page plays UGF when it changes
+                    "drops": rec.get("drops"),  # lifetime count; the page plays UGF when it changes
                     "rssi": rec["rssi"],
                     "age": round(now - rec["seen"], 1),
                     "seen": int(rec["seen"] * 1000),
                     "online": now - rec["seen"] < OFFLINE_S,
                     "totals": self.shown_totals(badge_id),
+                    "lifetime": rec["totals"],
                     "reset": badge_id in self.baselines,
                 }
             )
@@ -207,13 +209,21 @@ class BadgeLink(asyncio.DatagramProtocol):
             self.dash.observe_status(addr[0], status, now)
             self.heard.set()
             if now - self.acked.get(badge_id, 0) >= ACK_EVERY_S:
-                self.acked[badge_id] = now
-                self.transport.sendto(protocol.pack_ack(raw_id), addr)
+                self.ack(badge_id)
         elif kind == protocol.PKT_PING:
             self.addrs[badge_id] = addr
-            self.transport.sendto(protocol.pack_ack(raw_id), addr)
+            self.ack(badge_id)
         elif kind == protocol.PKT_REPLY and self.on_reply:
             self.on_reply(badge_id, payload)
+
+    def ack(self, badge_id):
+        """Ack a badge now, with its reset offset; False if never heard."""
+        addr = self.addrs.get(badge_id)
+        if addr is None or self.transport is None:
+            return False
+        self.acked[badge_id] = time.time()
+        self.transport.sendto(protocol.pack_ack(int(badge_id, 16), self.dash.offset_ms(badge_id)), addr)
+        return True
 
     def command(self, badge_id, op, arg=b""):
         """Send a command to a badge at its last address; False if never heard."""
@@ -254,6 +264,7 @@ async def main():
                 op = json.loads(msg.data)
                 if op.get("op") == "reset":
                     dash.reset(op.get("badge_id"))
+                    link.ack(op.get("badge_id", ""))  # the badge screen zeroes now, not at the next ack
                 elif op.get("op") == "rename":
                     name = str(op.get("name", "")).strip()[: protocol.UDP_NAME_MAX]
                     if name:
@@ -262,6 +273,8 @@ async def main():
                     link.command(op.get("badge_id", ""), protocol.CMD_IDENTIFY)
                 elif op.get("op") == "reset_all":
                     dash.reset_all()
+                    for badge_id in list(dash.badges):
+                        link.ack(badge_id)
                     history = {"type": "history", "history": dash.history, "cleared_ms": dash.cleared_ms}
                     for other in list(sockets):
                         try:
