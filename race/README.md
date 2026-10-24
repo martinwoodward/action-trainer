@@ -175,10 +175,13 @@ Ways back in:
 `leaderboard.py` follows any number of badges over Wi-Fi: each badge sends a
 UDP status datagram to port 47217 every 250 ms, and at once when its state
 changes. It shows each badge's **air time** (time in the `throw` state) since it was reset,
-and graphs every badge's cumulative air time on a chart that scrolls with the
-clock. You can choose a 1, 2, 3, 4, 5 or 10 min window. A badge named
-after an animal or a mascot (for example Duckie, Squirrel or Copilot) shows
-that picture at the leading end of its line, and next to its name on its card.
+and a **total air time** bar chart with one horizontal bar per badge, in the
+badge's colour, with its name on the left and its air time since reset at the
+right-hand end. Bars are sorted from most to least air time, top down; when a
+badge overtakes another, the bars slide past each other (600 ms). Offline badges stay on the
+chart, faded. A badge named after an animal or a mascot (for example Duckie,
+Squirrel or Copilot) has that picture at the right-hand end of its bar, and
+next to its name on its card.
 Duckie is drawn as a yellow rubber duck; Copilot and Mona use the Copilot and
 Octocat marks from Primer Octicons (MIT); Squirrel is the Twemoji squirrel
 (CC-BY 4.0, [jdecked/twemoji](https://github.com/jdecked/twemoji)); the other
@@ -209,11 +212,9 @@ allow sound after a click on the page.
 
 The page uses the light theme of [badger.github.io](https://badger.github.io/)
 (colours, fonts and card styles from its `src/styles/globals.css`). To add more, edit
-`NAMESAKES` in `web/leaderboard.html`. Points are only
-dropped from the chart once they are more than an hour old. The server saves
-the history, the known badges and the page-reset baselines to
-`leaderboard_state.json`, so neither a page reload nor a server restart empties
-the chart:
+`NAMESAKES` in `web/leaderboard.html`. The server saves the known badges and
+the page-reset baselines to `leaderboard_state.json`, so neither a page reload
+nor a server restart empties the chart:
 
 ```powershell
 python leaderboard.py              # http://localhost:8766
@@ -233,14 +234,20 @@ python leaderboard.py              # http://localhost:8766
 - **Rename and Find:** each card has **Rename**, which saves the new name on
   the badge, and **Find**, which flashes the badge's screen. Both are enabled
   while the badge is online.
-- **Resets:** a badge reboot zeroes its counters. **Reset** on the page (per
-  badge or **Reset all**) stores a baseline in `leaderboard_state.json`, and the
-  times shown are counted from that baseline. A restart of the leaderboard keeps
-  the baselines. The next reboot of that badge clears its baseline. **Reset
-  all** also clears the chart history, on the server and in every open page.
+- **Resets:** badges never reset their counters. Each badge saves its lifetime
+  totals to `/state` on every landing and every 60 s, so a reboot carries on
+  from where it was; a power cut loses at most 60 s of still time. Times are
+  sent as 64-bit milliseconds and counts as 32-bit, so they don't wrap.
+  **Reset** on the page (per badge or **Reset all**) records the badge's latest
+  totals as an offset in `leaderboard_state.json`, and the times shown are the
+  lifetime totals minus that offset. Offsets survive badge reboots and
+  leaderboard restarts. Each ack tells the badge its air-time offset, so the
+  badge screen shows air time since the last reset with its lifetime total
+  below. Its footer shows the throw and drop counts, the badge's IP (`Me`), and the
+  leaderboard's IP (`Srv`, or `Srv broadcast` while it searches) with the
+  seconds since the leaderboard last answered.
 - **Out of range:** a badge that goes quiet greys out after 5 s. When it
-  returns, its line continues from where it left off. Because the badge kept
-  counting, the jump across the gap is drawn as a dashed straight line.
+  returns, its bar catches up with what the badge counted meanwhile.
 - **Latency:** the server pushes each status to the page as it arrives.
   Measured with Copilot on venue Wi-Fi: a status every 250 ms (p50 255 ms,
   p90 360–470 ms), 5–15% of datagrams lost on a busy 2.4 GHz channel, and a
@@ -248,7 +255,7 @@ python leaderboard.py              # http://localhost:8766
   once and repeated 60 ms later, so a take-off usually reaches the page in
   well under 100 ms; in a 20 s test, all 20 state changes arrived. A badge
   is back online about 7 s after a reset. While
-  a badge is in the air, the page extends its line and air time live, for up
+  a badge is in the air, the page grows its bar and air time live, for up
   to 3 s past the last report. To measure packet gaps, loss and ping round
   trips, stop the leaderboard and run `python tools/udp_latency.py --seconds 60`.
   The old Bluetooth builds updated about every 0.3–0.5 s (p50), with gaps up to

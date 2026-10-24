@@ -1,7 +1,6 @@
 """Wire formats, the leaderboard's UDP link and its aggregation of per-state totals."""
 import asyncio
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
@@ -39,6 +38,20 @@ class UdpFormatTests(unittest.TestCase):
         self.assertEqual((st["boot"], st["seq"], st["state"]), (3, 70000 & 0xFFFF, 3))
         self.assertEqual((st["still_ms"], st["throw_ms"], st["drop_ms"]), (123456, 789, 42))
         self.assertEqual((st["air_total_ms"], st["throws"], st["rssi"], st["name"]), (5000, 7, -54, "Copilot"))
+
+    def test_lifetime_totals_do_not_wrap(self):
+        big = 5 * 2**32 + 7  # far past uint32 ms (49.7 days)
+        packet = protocol.pack_status(1, 300, 1, 0, 0, big, big, 70000, 2**31, 2**20,
+                                      big, big + 1, big + 2, -40, "x")
+        st = protocol.unpack_status(packet)
+        self.assertEqual((st["still_ms"], st["throw_ms"], st["drop_ms"], st["air_total_ms"]),
+                         (big, big + 1, big + 2, big))
+        self.assertEqual((st["boot"], st["drops"], st["throws"], st["steps"]), (300, 70000, 2**31, 2**20))
+
+    def test_ack_carries_the_reset_offset(self):
+        kind, badge_id, payload = protocol.unpack_payload(protocol.pack_ack(9, 2**33))
+        self.assertEqual((kind, badge_id, protocol.unpack_ack(payload)), (protocol.PKT_ACK, 9, 2**33))
+        self.assertEqual(protocol.unpack_ack(b""), 0)
 
     def test_name_is_truncated_and_bad_packets_rejected(self):
         st = protocol.unpack_status(status_packet(name="a-very-long-badge-name"))
@@ -87,6 +100,14 @@ class BadgeLinkTests(unittest.TestCase):
         self.link.datagram_received(protocol.pack_ping(0xC03CFD52), addr)
         self.assertEqual(self.transport.sent, [(protocol.pack_ack(0xC03CFD52), addr)] * 3)
 
+    def test_acks_carry_the_offset_after_a_reset(self):
+        addr = ("192.168.9.208", 47217)
+        self.assertFalse(self.link.ack("c03cfd52"))  # never heard
+        self.link.datagram_received(status_packet(throw=600), addr)
+        self.dash.reset("c03cfd52")
+        self.assertTrue(self.link.ack("c03cfd52"))
+        self.assertEqual(self.transport.sent[-1], (protocol.pack_ack(0xC03CFD52, 600), addr))
+
     def test_commands_go_to_the_last_address_and_replies_are_routed(self):
         self.assertFalse(self.link.command("c03cfd52", protocol.CMD_IDENTIFY))  # never heard
         self.link.datagram_received(status_packet(), ("10.0.0.5", 5000))
@@ -119,54 +140,42 @@ class LeaderboardTests(unittest.TestCase):
         restarted.observe("A", "b1", -50, mfg(3), stats(3, 12000, 1500, 2000), now=100.0)
         self.assertEqual(restarted.snapshot(now=100.0)["badges"][0]["totals"]["still"], 2000)
 
-    def test_reboot_clears_page_reset_and_old_totals(self):
-        self.dash.observe("A", "b1", -50, mfg(3), stats(3, 10000), now=100.0)
+    def test_reboot_keeps_page_reset_and_lifetime(self):
+        self.dash.observe("A", "b1", -50, mfg(3), stats(3, 10000, 500), now=100.0)
         self.dash.reset("c03cfd52")
-        # New boot, but the scan response still carries the previous boot's totals.
-        self.dash.observe("A", "b1", -50, mfg(4), stats(3, 10000), now=100.0)
-        self.assertIsNone(self.totals())
-        self.dash.observe("A", "b1", -50, mfg(4), stats(4, 300), now=100.0)
-        self.assertEqual(self.totals(), {"still": 300, "throw": 0, "drop": 0})
-        self.assertNotIn("c03cfd52", Leaderboard(self.state_file).baselines)
+        self.dash.observe("A", "b1", -50, mfg(4), stats(4, 10300, 900), now=100.0)  # rebooted; totals kept growing
+        self.assertEqual(self.totals(), {"still": 300, "throw": 400, "drop": 0})
+        self.assertEqual(self.dash.snapshot(now=100.0)["badges"][0]["lifetime"]["throw"], 900)
+        self.assertIn("c03cfd52", Leaderboard(self.state_file).baselines)
 
-    def test_history_samples_air_time_and_collapses_flat_runs(self):
-        for i, throw in enumerate([0, 0, 0, 800, 800]):
-            self.dash.observe("A", "b1", -50, mfg(3), stats(3, 1000, throw), now=100.0 + i)
-            self.dash.sample(now=100.0 + i)
-        self.assertEqual(self.dash.history["c03cfd52"],
-                         [[100000, 0], [102000, 0], [103000, 800], [104000, 800]])
-        self.dash.sample(now=200.0)  # nothing new heard: no new point
-        self.assertEqual(len(self.dash.history["c03cfd52"]), 4)
+    def test_power_cut_rollback_is_clamped(self):
+        self.dash.observe("A", "b1", -50, mfg(3), stats(3, 10000, 500), now=100.0)
+        self.dash.reset("c03cfd52")
+        self.dash.observe("A", "b1", -50, mfg(4), stats(4, 9500, 500), now=100.0)  # lost unsaved still time
+        self.assertEqual(self.totals(), {"still": 0, "throw": 0, "drop": 0})
 
-    def test_return_after_gap_continues_the_same_line_and_persists(self):
-        t0 = float(int(time.time()) - 400)
-        ms = lambda t: int((t0 + t) * 1000)
-        self.dash.observe("A", "b1", -50, mfg(3), stats(3, 1000, 800), now=t0)
-        self.dash.sample(now=t0)
-        for t in (200.0, 201.0, 202.0):  # back in range after 200 s
-            self.dash.observe("A", "b1", -50, mfg(3), stats(3, 1000, 2500), now=t0 + t)
-            self.dash.sample(now=t0 + t)
-        self.assertEqual(self.dash.history["c03cfd52"],
-                         [[ms(0), 800], [ms(200), 2500, 1], [ms(202), 2500]])
-        self.dash.save()
+    def test_old_per_boot_baselines_are_dropped(self):
+        self.state_file.write_text('{"baselines": {"a": {"boot": 3, "ms": {"still": 1, "throw": 2, "drop": 3}},'
+                                   ' "b": {"ms": {"still": 1, "throw": 2, "drop": 3}}}}', encoding="utf-8")
+        self.assertEqual(list(Leaderboard(self.state_file).baselines), ["b"])
+
+    def test_legacy_cached_totals_are_not_used_as_offsets(self):
+        self.state_file.write_text('{"badges": {"c03cfd52": {"badge_id": "c03cfd52", "name": "b1", "boot": 3,'
+                                   ' "totals": {"still": 1, "throw": 60000, "drop": 0}, "seen": 0, "rssi": -50,'
+                                   ' "state": "still"}}}', encoding="utf-8")
+        dash = Leaderboard(self.state_file)
+        self.assertFalse(dash.reset("c03cfd52"))  # nothing to reset until a v3 report arrives
+        dash.observe("A", "b1", -50, mfg(1), stats(1, 1000, 2000), now=100.0)
+        self.assertEqual(dash.snapshot(now=100.0)["badges"][0]["totals"]["throw"], 2000)
+
+    def test_reset_all_zeros_every_badge_and_persists(self):
+        self.dash.observe("A", "b1", -50, mfg(3), stats(3, 1000, 800), now=100.0)
+        self.dash.reset_all()
+        self.dash.observe("A", "b1", -50, mfg(3), stats(3, 1000, 900), now=101.0)
+        self.assertEqual(self.totals(), {"still": 0, "throw": 100, "drop": 0})
         restarted = Leaderboard(self.state_file)
-        self.assertEqual(restarted.history, self.dash.history)
-        self.assertEqual(restarted.snapshot(now=t0 + 202)["badges"][0]["totals"]["throw"], 2500)
-        restarted.trim(now=t0 + 3700)
-        self.assertEqual(restarted.history["c03cfd52"], [[ms(200), 2500, 1], [ms(202), 2500]])
-
-    def test_reset_all_clears_history(self):
-        t0 = float(int(time.time()) - 100)
-        self.dash.observe("A", "b1", -50, mfg(3), stats(3, 1000, 800), now=t0)
-        self.dash.sample(now=t0)
-        self.dash.reset_all(now=t0 + 10)
-        self.assertEqual(self.dash.history, {})
-        self.dash.sample(now=t0 + 10)  # the advert heard before the reset isn't charted
-        self.assertEqual(self.dash.history.get("c03cfd52", []), [])
-        restarted = Leaderboard(self.state_file)
-        restarted.observe("A", "b1", -50, mfg(3), stats(3, 1000, 900), now=t0 + 20)
-        restarted.sample(now=t0 + 20)
-        self.assertEqual(restarted.history["c03cfd52"], [[int((t0 + 20) * 1000), 100]])
+        restarted.observe("A", "b1", -50, mfg(4), stats(4, 1000, 950), now=101.0)
+        self.assertEqual(restarted.snapshot(now=101.0)["badges"][0]["totals"]["throw"], 150)
 
     def test_offline_and_old_build(self):
         self.dash.observe("A", None, -60, mfg(1, state=3), None, now=80.0)

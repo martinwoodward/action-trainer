@@ -153,18 +153,20 @@ def unpack_mfg(data):
 # broadcasts learns the server's address) and commands. Every datagram starts
 # with MAGIC, UDP_VERSION and a one-byte type.
 UDP_PORT = 47217
-UDP_VERSION = 2
+UDP_VERSION = 3
 UDP_HEADER = "<2sBBI"  # magic, version, type, badge_id
 UDP_HEADER_SIZE = struct.calcsize(UDP_HEADER)
 PKT_STATUS = 0x53  # "S" badge -> server
-PKT_ACK = 0x41  # "A" server -> badge: "I heard you; send to me directly"
+PKT_ACK = 0x41  # "A" server -> badge: "I heard you; send to me directly" + ACK_BODY
 PKT_CMD = 0x43  # "C" server -> badge: opcode byte + argument (CMD_*)
 PKT_REPLY = 0x52  # "R" badge -> server: echo of a CMD_PING argument
 PKT_PING = 0x50  # "P" badge -> server: "still there?"; answered at once with PKT_ACK
 
 CMD_PING = b"P"  # P<token>: badge echoes <token> in a PKT_REPLY
 
-STATUS_BODY = "<BHBHIIBBHIIIb"
+# Totals are lifetime values that only ever grow (the badge saves them across
+# reboots): ms as uint64, counts as uint32, so they can't wrap in practice.
+STATUS_BODY = "<HHBHQQIIIQQQb"
 STATUS_FIELDS = (
     "boot",
     "seq",
@@ -202,18 +204,18 @@ def pack_status(badge_id, boot, seq, state, flight_ms, air_total_ms, air_at_rese
                 still_ms, throw_ms, drop_ms, rssi, name):
     body = struct.pack(
         STATUS_BODY,
-        boot & 0xFF,
+        boot & 0xFFFF,
         seq & 0xFFFF,
         state & 0xFF,
         min(flight_ms, 0xFFFF),
-        air_total_ms & 0xFFFFFFFF,
-        air_at_reset_ms & 0xFFFFFFFF,
-        drops & 0xFF,
-        throws & 0xFF,
-        steps & 0xFFFF,
-        still_ms & 0xFFFFFFFF,
-        throw_ms & 0xFFFFFFFF,
-        drop_ms & 0xFFFFFFFF,
+        air_total_ms,
+        air_at_reset_ms,
+        drops,
+        throws,
+        steps,
+        still_ms,
+        throw_ms,
+        drop_ms,
         max(-128, min(127, rssi)),
     )
     return _header(PKT_STATUS, badge_id) + body + name.encode()[:UDP_NAME_MAX]
@@ -230,8 +232,18 @@ def unpack_status(data):
     return out
 
 
-def pack_ack(badge_id):
-    return _header(PKT_ACK, badge_id)
+ACK_BODY = "<Q"  # throw_ms at the badge's last leaderboard reset (0 = never reset)
+
+
+def pack_ack(badge_id, offset_ms=0):
+    return _header(PKT_ACK, badge_id) + struct.pack(ACK_BODY, offset_ms)
+
+
+def unpack_ack(payload):
+    """Return the reset offset from a PKT_ACK payload (0 if absent)."""
+    if len(payload) < struct.calcsize(ACK_BODY):
+        return 0
+    return struct.unpack_from(ACK_BODY, payload, 0)[0]
 
 
 def pack_cmd(badge_id, op, arg=b""):
