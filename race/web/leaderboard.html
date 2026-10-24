@@ -35,8 +35,7 @@
   header h1 { font:600 1.5rem/1 var(--display); letter-spacing:-0.025em; margin:0; display:flex; align-items:center; gap:.6rem; }
   header h1 .mark { width:2.25rem; height:2.25rem; border-radius:.6rem; display:grid; place-items:center; background:var(--foreground); }
   #conn { flex:1; }
-  .eyebrow, #conn, label.meta { font:500 .68rem/1 var(--mono); text-transform:uppercase; letter-spacing:.14em; color:var(--muted-foreground); }
-  label.meta { display:flex; align-items:center; gap:.5rem; }
+  .eyebrow, #conn { font:500 .68rem/1 var(--mono); text-transform:uppercase; letter-spacing:.14em; color:var(--muted-foreground); }
   button, select {
     font:500 .72rem/1 var(--mono); text-transform:uppercase; letter-spacing:.12em; color:var(--foreground);
     background:var(--card); border:1px solid var(--input); border-radius:calc(var(--radius) - 2px);
@@ -77,16 +76,6 @@
 <header>
   <h1><span class="mark" aria-hidden="true"><img id="logo" alt="" width="22" height="22"></span>Air time</h1>
   <span id="conn">connecting…</span>
-  <label class="meta">window
-    <select id="span">
-      <option value="60">1 min</option>
-      <option value="120">2 min</option>
-      <option value="180">3 min</option>
-      <option value="240">4 min</option>
-      <option value="300" selected>5 min</option>
-      <option value="600">10 min</option>
-    </select>
-  </label>
   <button id="sound" title="Play each plushie's sound while it is in the air, and UGF when one is dropped">Sound off</button>
   <button id="resetall" class="danger">Reset all</button>
 </header>
@@ -98,16 +87,13 @@
 </main>
 <script>
 const PALETTE = ["#08872B", "#0969da", "#bc4c00", "#8250df", "#bf3989", "#cf222e", "#1b7c83", "#9a6700", "#5A615C", "#3192aa"];
-const KEEP_S = 3600;
-const GAP_MS = 5000;     // matches the server's OFFLINE_S
 const LIVE_MAX_MS = 3000; // longest a flight is extended past the last report
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 const nameOf = {};       // badge_id -> last known name
-const history = {};      // badge_id -> [[time_ms, air_ms], ...]
-let badges = [], ws, clearedMs = 0;
+let badges = [], ws;
 
-// A badge named after an animal gets its picture at the head of its chart line:
+// A badge named after an animal gets its picture on top of its bar:
 // an emoji, or an image (an object with an Image) where no emoji fits.
 const RUBBER_DUCK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"> <path d="M6 38c0-6 5-9 12-9h14c4 0 6-2 6-5h2c10 0 18 6 18 15 0 10-9 17-26 17H22C12 56 6 49 6 38z" fill="#ffd21f" stroke="#c99400" stroke-width="2"/> <path d="M24 38c4-3 12-3 16 1-2 6-12 8-18 4z" fill="#ffbf00" stroke="#c99400" stroke-width="1.5"/> <circle cx="44" cy="20" r="12" fill="#ffd21f" stroke="#c99400" stroke-width="2"/> <path d="M54 19c5-1 9 1 9 3s-4 4-9 3z" fill="#ff7a00" stroke="#c45500" stroke-width="1.5"/> <circle cx="47" cy="16" r="2.6" fill="#1b1b1b"/> <circle cx="47.9" cy="15.2" r="0.9" fill="#fff"/> </svg>`;
 // GitHub Copilot mark: Primer Octicons copilot-24 (MIT, github.com/primer/octicons).
@@ -150,21 +136,6 @@ function fmt(ms) {
   if (s < 60) return s.toFixed(1) + " s";
   const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, r = Math.floor(s % 60);
   return h ? `${h}:${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}` : `${m}:${String(r).padStart(2, "0")}`;
-}
-
-function record(status) {
-  const now = Date.now();
-  for (const b of status.badges) {
-    if (!b.totals) continue;
-    const h = history[b.badge_id] || (history[b.badge_id] = []);
-    const last = h[h.length - 1];
-    if (b.seen < clearedMs || last && b.seen <= last[0]) continue;  // cleared, or nothing new heard
-    const point = [b.seen, b.totals.throw];
-    if (last && b.seen - last[0] > GAP_MS) point.push(1);  // first point after a gap
-    if (point.length === 2 && h.length > 1 && last.length === 2 && last[1] === point[1] && h[h.length - 2][1] === last[1]) last[0] = b.seen;
-    else h.push(point);
-    while (h.length && h[0][0] < now - KEEP_S * 1000) h.shift();
-  }
 }
 
 // While a badge last reported being in the air, its air time keeps rising in
@@ -341,10 +312,12 @@ function render(status) {
   $("conn").textContent = `${online} online · ${badges.length} seen`;
 }
 
-function niceStep(max, n) {
-  const raw = max / n, mag = 10 ** Math.floor(Math.log10(raw));
-  return [1, 2, 5, 10].map(f => f * mag).find(s => s >= raw);
-}
+// Bars ease to their new slot when the order changes, and to their new height.
+const SWAP_MS = 600;
+const bars = {};  // badge_id -> {from, to, start, h}
+let scaleTop = 1000, lastFrame = 0;
+const ease = t => t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+const follow = (v, target, dt, tau) => v + (target - v) * (1 - Math.exp(-dt / tau));
 
 function draw() {
   const cv = $("chart"), dpr = devicePixelRatio || 1;
@@ -353,90 +326,65 @@ function draw() {
   const g = cv.getContext("2d");
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, W, H);
-  const L = 64, R = 30, T = 26, B = 30, pw = W - L - R, ph = H - T - B;
-  const span = +$("span").value * 1000, now = Date.now(), t0 = now - span;
-  const online = new Set(badges.filter(b => b.online).map(b => b.badge_id));
-  const names = Object.fromEntries(badges.map(b => [b.badge_id, b.name]));
-  const byId = Object.fromEntries(badges.map(b => [b.badge_id, b]));
+  const now = Date.now(), dt = lastFrame ? Math.min(now - lastFrame, 100) : 1000;
+  lastFrame = now;
   for (const b of badges) if (extra(b, now)) { const el = document.querySelector(`[data-air="${b.badge_id}"]`); if (el) el.textContent = fmt(liveAir(b, now)); }
-  const heads = [];
 
-  let maxMs = 1000;
-  for (const [id, h] of Object.entries(history)) {
-    for (const [t, v] of h) if (t >= t0 - 5000) maxMs = Math.max(maxMs, v);
-    if (h.length) maxMs = Math.max(maxMs, h[h.length - 1][1] + extra(byId[id], now));
-  }
-  const step = niceStep(maxMs / 1000, 5) * 1000, top = Math.ceil(maxMs / step) * step;
-  const x = t => L + (t - t0) / span * pw, y = v => T + ph - v / top * ph;
+  const L = 24, R = 24, T = 40 + 36 + 22, B = 34, pw = W - L - R, ph = H - T - B, base = T + ph;
+  g.font = `500 11px ${MONO}`; g.fillStyle = INK.muted; g.textAlign = "left"; g.textBaseline = "top";
+  g.fillText("TOTAL AIR TIME", L, 14);
 
-  g.font = `11px ${MONO}`; g.lineWidth = 1;
-  g.fillStyle = INK.muted; g.strokeStyle = INK.grid;
-  g.textAlign = "right"; g.textBaseline = "middle";
-  for (let v = 0; v <= top + 1; v += step) {
-    g.beginPath(); g.moveTo(L, y(v)); g.lineTo(W - R, y(v)); g.stroke();
-    g.fillText(fmt(v), L - 8, y(v));
+  // Smallest to largest, left to right; ties keep a stable order.
+  const shown = badges.filter(b => b.totals).map(b => ({b, air: liveAir(b, now)}))
+    .sort((p, q) => p.air - q.air || p.b.name.localeCompare(q.b.name) || p.b.badge_id.localeCompare(q.b.badge_id));
+  for (const id in bars) if (!shown.some(s => s.b.badge_id === id)) delete bars[id];
+  if (!shown.length) {
+    g.textAlign = "center"; g.textBaseline = "middle"; g.font = `500 12px ${MONO}`;
+    g.fillText("NO AIR TIME YET", W / 2, T + ph / 2);
+    requestAnimationFrame(draw);
+    return;
   }
-  const tick = span <= 60000 ? 10000 : span <= 180000 ? 30000 : span <= 300000 ? 60000 : 120000;
-  g.textAlign = "center"; g.textBaseline = "top";
-  for (let t = Math.ceil(t0 / tick) * tick; t <= now; t += tick) {
-    g.beginPath(); g.moveTo(x(t), T); g.lineTo(x(t), T + ph); g.stroke();
-    g.fillText(new Date(t).toLocaleTimeString([], {hour: "numeric", minute: "2-digit", second: tick < 60000 ? "2-digit" : undefined}), x(t), T + ph + 8);
-  }
+  const maxAir = Math.max(1000, ...shown.map(s => s.air));
+  scaleTop = scaleTop < maxAir ? maxAir : follow(scaleTop, maxAir, dt, 250);
+  const slotW = pw / shown.length, barW = Math.min(slotW * 0.6, 140);
+  const slotX = slot => L + slot * slotW + slotW / 2;
 
-  g.save();
-  g.beginPath(); g.rect(L, T, pw, ph); g.clip();
-  g.lineWidth = 2.5; g.lineJoin = "round";
-  for (const [id, h] of Object.entries(history)) {
-    if (!h.length) continue;
-    g.strokeStyle = colour(id);
-    // Solid where the badge was heard; dashed across gaps (out of range), where
-    // the air time in between is unknown and drawn as a straight line.
-    const solid = new Path2D(), gaps = new Path2D();
-    for (let i = 0; i < h.length; i++) {
-      if (i + 1 < h.length && h[i + 1][0] < t0) continue;
-      const [t, v] = h[i];
-      if (i === 0) { solid.moveTo(x(t), y(v)); continue; }
-      const [pt, pv] = h[i - 1];
-      const path = h[i][2] ? gaps : solid;
-      path.moveTo(x(pt), y(pv)); path.lineTo(x(t), y(v));
+  const items = shown.map(({b, air}, slot) => {
+    let a = bars[b.badge_id];
+    if (!a) a = bars[b.badge_id] = {from: slot, to: slot, start: 0, h: air};
+    if (a.to !== slot) {
+      const p = Math.min(1, (now - a.start) / SWAP_MS);
+      a.from = a.from + (a.to - a.from) * ease(p);  // retarget from where it is now
+      a.to = slot; a.start = now;
     }
-    const last = h[h.length - 1];
-    const up = extra(byId[id], now), headV = last[1] + up;
-    if (online.has(id)) {
-      solid.moveTo(x(last[0]), y(last[1]));
-      if (up) solid.lineTo(x(last[0] + up), y(headV));  // rising live at 1 s per s
-      solid.lineTo(x(now), y(headV));
-    }
-    g.setLineDash([]); g.stroke(solid);
-    g.setLineDash([6, 6]); g.stroke(gaps); g.setLineDash([]);
-    const headT = online.has(id) ? now : last[0];
-    if (headT >= t0) heads.push({id, x: x(headT), y: y(online.has(id) ? headV : last[1]), online: online.has(id), emoji: namesake(names[id])});
-  }
-  g.restore();
+    const p = Math.min(1, (now - a.start) / SWAP_MS);
+    // Live growth is already smooth; ease only jumps such as a reset.
+    a.h = Math.abs(air - a.h) < 400 ? air : follow(a.h, air, dt, 120);
+    return {b, a, x: slotX(a.from + (a.to - a.from) * ease(p)), moving: p < 1};
+  });
 
-  // Line heads drawn unclipped, so an emoji at the edge isn't cut off.
-  for (const h of heads) {
-    g.globalAlpha = h.online ? 1 : 0.5;
-    if (h.emoji && h.emoji.img) {
-      if (h.emoji.img.complete) g.drawImage(h.emoji.img, h.x - 18, h.y - 18, 36, 36);
-    } else if (h.emoji) {
-      g.font = `30px ${EMOJI_FONT}`; g.textAlign = "center"; g.textBaseline = "middle";
-      g.fillText(h.emoji, h.x, h.y);
-    } else if (h.online) {
-      g.fillStyle = colour(h.id); g.beginPath(); g.arc(h.x - 3, h.y, 4, 0, 7); g.fill();
+  g.strokeStyle = INK.grid; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(L, base + 0.5); g.lineTo(W - R, base + 0.5); g.stroke();
+  // Moving bars are drawn last, so a swap passes in front of the others.
+  for (const {b, a, x} of items.sort((p, q) => p.moving - q.moving)) {
+    const h = Math.max(2, a.h / scaleTop * ph), top = base - h;
+    g.globalAlpha = b.online ? 1 : 0.35;
+    g.fillStyle = colour(b.badge_id);
+    g.beginPath(); g.roundRect(x - barW / 2, top, barW, h, [6, 6, 0, 0]); g.fill();
+    const icon = namesake(b.name);
+    if (icon && icon.img) {
+      if (icon.img.complete) g.drawImage(icon.img, x - 18, top - 38, 36, 36);
+    } else if (icon) {
+      g.font = `30px ${EMOJI_FONT}`; g.textAlign = "center"; g.textBaseline = "bottom";
+      g.fillText(icon, x, top - 2);
+    } else {
+      g.beginPath(); g.arc(x, top - 14, 8, 0, 7); g.fill();
     }
+    g.fillStyle = INK.text; g.textAlign = "center"; g.textBaseline = "bottom";
+    g.font = `600 14px ${MONO}`; g.fillText(fmt(a.h), x, top - 42);
+    g.font = `600 12px ${SANS}`; g.textBaseline = "top"; g.fillText(b.name, x, base + 8);
   }
   g.globalAlpha = 1;
-  g.font = `600 12px ${SANS}`;
-
-  g.textAlign = "left"; g.textBaseline = "middle";
-  let lx = L + 10;
-  for (const b of badges) {
-    if (!history[b.badge_id]) continue;
-    g.fillStyle = colour(b.badge_id); g.fillRect(lx, T + 8, 12, 4);
-    g.fillStyle = INK.text; g.fillText(b.name, lx + 18, T + 10);
-    lx += g.measureText(b.name).width + 40;
-  }
   requestAnimationFrame(draw);
 }
 
@@ -444,8 +392,7 @@ function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onmessage = e => {
     const m = JSON.parse(e.data);
-    if (m.type === "history") { for (const k in history) delete history[k]; Object.assign(history, m.history); clearedMs = m.cleared_ms || 0; }
-    if (m.type === "status") { record(m); render(m); }
+    if (m.type === "status") render(m);
   };
   ws.onclose = () => { $("conn").textContent = "server disconnected, retrying…"; setTimeout(connect, 1000); };
 }
@@ -473,7 +420,7 @@ $("sound").onclick = () => {
 // Browsers start audio suspended until the page is clicked.
 document.addEventListener("pointerdown", () => { if (soundOn) ctx(); setTimeout(showSound, 50); });
 showSound();
-$("resetall").onclick = () => { if (confirm("Reset the air time of every badge and clear the chart?")) send({op: "reset_all"}); };
+$("resetall").onclick = () => { if (confirm("Reset the air time of every badge?")) send({op: "reset_all"}); };
 connect();
 requestAnimationFrame(draw);
 </script>

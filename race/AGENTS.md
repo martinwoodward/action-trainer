@@ -35,7 +35,8 @@ into Race). Deploy both with `tools/deploy_race.py` (`kiosk`, `app` or
 - `leaderboard.py` with `web/leaderboard.html`: a multi-badge page at
   http://localhost:8766. Badges send UDP status datagrams over Wi-Fi to port
   47217. The page shows air time (time in `throw`) since the last reset, with
-  a scrolling chart of each badge's cumulative air time. The badge counts the
+  a bar chart of each badge's air time, sorted smallest to largest with
+  animated swaps. The badge counts the
   ms per state and sends lifetime totals (saved in `/state`, never reset;
   64-bit ms, 32-bit counts) in each status. The server acks badges
   (so they switch from broadcast to unicast) and sends commands: rename,
@@ -43,8 +44,7 @@ into Race). Deploy both with `tools/deploy_race.py` (`kiosk`, `app` or
   every 30 s and broadcasts again after three unanswered pings.
   Acks carry the badge's air-time offset so its screen can show since-reset
   air time. `leaderboard_state.json` holds the page-reset offsets
-  (lifetime totals at the reset; reboots don't clear them), the known badges and an hour of chart
-  history. `tools/udp_latency.py` measures packet gaps and ping round trips.
+  (lifetime totals at the reset; reboots don't clear them), and the known badges. `tools/udp_latency.py` measures packet gaps and ping round trips.
 - The race app in this repo has **no BLE**: it talks Wi-Fi/UDP only, so
   `race_rec.py` and `listen.py` need a BLE build for recording. Its Wi-Fi
   settings live in `/state/airtime_net.json` (`ssid`, `password`, `server`),

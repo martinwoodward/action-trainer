@@ -29,7 +29,6 @@ STATES = ("still", "throw", "drop")
 # Advertised state codes (protocol.STATE_*) folded into the model's three.
 STATE_BY_CODE = {0: "still", 1: "still", 2: "throw", 3: "throw", 4: "drop", 5: "still"}
 OFFLINE_S = 5.0  # badges send a heartbeat every 250 ms
-HISTORY_S = 3600  # air-time history kept for the graph
 SAVE_EVERY_S = 10.0
 PUSH_MIN_S = 0.05  # reports heard within this are pushed to pages together
 TICK_S = 0.5  # pages also get a status this often, to age offline badges
@@ -42,9 +41,6 @@ class Leaderboard:
         self.badges = {}  # badge_id -> record
         # badge_id -> {"ms": {state: ms}}: lifetime totals at the page reset
         self.baselines = {}
-        # badge_id -> [[epoch_ms, air_ms], ...]: shown air time when an advert arrived
-        self.history = {}
-        self.cleared_ms = 0  # Reset all: adverts heard before this are not charted
         self.load()
 
     # --- persistence -------------------------------------------------------
@@ -57,14 +53,10 @@ class Leaderboard:
             # Baselines with a "boot" are from per-boot badge totals; they don't match lifetime ones.
             self.baselines = {k: v for k, v in saved.get("baselines", {}).items() if "boot" not in v}
             self.badges = saved.get("badges", {})
-            self.history = saved.get("history", {})
-            self.cleared_ms = saved.get("cleared_ms", 0)
-            self.trim()
 
     def save(self):
         if self.state_file:
-            data = {"baselines": self.baselines, "badges": self.badges, "history": self.history,
-                    "cleared_ms": self.cleared_ms}
+            data = {"baselines": self.baselines, "badges": self.badges}
             tmp = self.state_file.with_suffix(".tmp")
             tmp.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
             tmp.replace(self.state_file)
@@ -114,47 +106,11 @@ class Leaderboard:
         self.save()
         return True
 
-    def reset_all(self, now=None):
-        """Zero every badge and clear the chart history."""
-        now = time.time() if now is None else now
-        self.history = {}
-        self.cleared_ms = int(now * 1000)
+    def reset_all(self):
+        """Zero every badge."""
         for badge_id in list(self.badges):
             self.reset(badge_id)
         self.save()
-
-    def sample(self, now=None):
-        """Add a history point for each badge heard since its last point.
-
-        Points are stamped with the time the advert arrived, so a badge that
-        was out of range resumes the same line; the chart joins the last point
-        before the gap to the first one after it.
-        """
-        now = time.time() if now is None else now
-        for badge_id, rec in self.badges.items():
-            totals = self.shown_totals(badge_id)
-            if totals is None:
-                continue
-            h = self.history.setdefault(badge_id, [])
-            point = [int(rec["seen"] * 1000), totals["throw"]]
-            if point[0] < self.cleared_ms or (h and point[0] <= h[-1][0]):
-                continue  # nothing new heard
-            if h and point[0] - h[-1][0] > OFFLINE_S * 1000:
-                point.append(1)  # first point after a gap; the chart dashes the jump
-            # A flat run of heard points only needs its first and last point.
-            if len(point) == 2 and len(h) >= 2 and len(h[-1]) == 2 and h[-1][1] == h[-2][1] == point[1]:
-                h[-1] = point
-            else:
-                h.append(point)
-        self.trim(now)
-
-    def trim(self, now=None):
-        """Drop history points older than HISTORY_S."""
-        now = time.time() if now is None else now
-        cutoff = (now - HISTORY_S) * 1000
-        for h in self.history.values():
-            while h and h[0][0] < cutoff:
-                h.pop(0)
 
     def snapshot(self, now=None):
         now = time.time() if now is None else now
@@ -239,7 +195,7 @@ async def main():
     parser.add_argument("--port", type=int, default=8766)
     parser.add_argument("--udp-port", type=int, default=protocol.UDP_PORT, help="badge reports (default: %(default)s)")
     parser.add_argument("--no-browser", action="store_true")
-    parser.add_argument("--state", type=Path, default=STATE_FILE, help="baselines, badges and history (default: %(default)s)")
+    parser.add_argument("--state", type=Path, default=STATE_FILE, help="baselines and badges (default: %(default)s)")
     args = parser.parse_args()
 
     dash = Leaderboard(args.state)
@@ -255,7 +211,6 @@ async def main():
         ws = web.WebSocketResponse()
         await ws.prepare(request)
         sockets.add(ws)
-        await ws.send_json({"type": "history", "history": dash.history, "cleared_ms": dash.cleared_ms})
         await ws.send_json(dash.snapshot())
         try:
             async for msg in ws:
@@ -275,12 +230,6 @@ async def main():
                     dash.reset_all()
                     for badge_id in list(dash.badges):
                         link.ack(badge_id)
-                    history = {"type": "history", "history": dash.history, "cleared_ms": dash.cleared_ms}
-                    for other in list(sockets):
-                        try:
-                            await other.send_json(history)
-                        except (ConnectionError, RuntimeError):
-                            sockets.discard(other)
                 await ws.send_json(dash.snapshot())
         finally:
             sockets.discard(ws)
@@ -297,7 +246,6 @@ async def main():
             except asyncio.TimeoutError:
                 pass
             heard.clear()
-            dash.sample()
             if time.time() - last_save >= SAVE_EVERY_S:
                 dash.save()
                 last_save = time.time()

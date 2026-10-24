@@ -1,7 +1,6 @@
 """Wire formats, the leaderboard's UDP link and its aggregation of per-state totals."""
 import asyncio
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
@@ -160,44 +159,14 @@ class LeaderboardTests(unittest.TestCase):
                                    ' "b": {"ms": {"still": 1, "throw": 2, "drop": 3}}}}', encoding="utf-8")
         self.assertEqual(list(Leaderboard(self.state_file).baselines), ["b"])
 
-    def test_history_samples_air_time_and_collapses_flat_runs(self):
-        for i, throw in enumerate([0, 0, 0, 800, 800]):
-            self.dash.observe("A", "b1", -50, mfg(3), stats(3, 1000, throw), now=100.0 + i)
-            self.dash.sample(now=100.0 + i)
-        self.assertEqual(self.dash.history["c03cfd52"],
-                         [[100000, 0], [102000, 0], [103000, 800], [104000, 800]])
-        self.dash.sample(now=200.0)  # nothing new heard: no new point
-        self.assertEqual(len(self.dash.history["c03cfd52"]), 4)
-
-    def test_return_after_gap_continues_the_same_line_and_persists(self):
-        t0 = float(int(time.time()) - 400)
-        ms = lambda t: int((t0 + t) * 1000)
-        self.dash.observe("A", "b1", -50, mfg(3), stats(3, 1000, 800), now=t0)
-        self.dash.sample(now=t0)
-        for t in (200.0, 201.0, 202.0):  # back in range after 200 s
-            self.dash.observe("A", "b1", -50, mfg(3), stats(3, 1000, 2500), now=t0 + t)
-            self.dash.sample(now=t0 + t)
-        self.assertEqual(self.dash.history["c03cfd52"],
-                         [[ms(0), 800], [ms(200), 2500, 1], [ms(202), 2500]])
-        self.dash.save()
+    def test_reset_all_zeros_every_badge_and_persists(self):
+        self.dash.observe("A", "b1", -50, mfg(3), stats(3, 1000, 800), now=100.0)
+        self.dash.reset_all()
+        self.dash.observe("A", "b1", -50, mfg(3), stats(3, 1000, 900), now=101.0)
+        self.assertEqual(self.totals(), {"still": 0, "throw": 100, "drop": 0})
         restarted = Leaderboard(self.state_file)
-        self.assertEqual(restarted.history, self.dash.history)
-        self.assertEqual(restarted.snapshot(now=t0 + 202)["badges"][0]["totals"]["throw"], 2500)
-        restarted.trim(now=t0 + 3700)
-        self.assertEqual(restarted.history["c03cfd52"], [[ms(200), 2500, 1], [ms(202), 2500]])
-
-    def test_reset_all_clears_history(self):
-        t0 = float(int(time.time()) - 100)
-        self.dash.observe("A", "b1", -50, mfg(3), stats(3, 1000, 800), now=t0)
-        self.dash.sample(now=t0)
-        self.dash.reset_all(now=t0 + 10)
-        self.assertEqual(self.dash.history, {})
-        self.dash.sample(now=t0 + 10)  # the advert heard before the reset isn't charted
-        self.assertEqual(self.dash.history.get("c03cfd52", []), [])
-        restarted = Leaderboard(self.state_file)
-        restarted.observe("A", "b1", -50, mfg(3), stats(3, 1000, 900), now=t0 + 20)
-        restarted.sample(now=t0 + 20)
-        self.assertEqual(restarted.history["c03cfd52"], [[int((t0 + 20) * 1000), 100]])
+        restarted.observe("A", "b1", -50, mfg(4), stats(4, 1000, 950), now=101.0)
+        self.assertEqual(restarted.snapshot(now=101.0)["badges"][0]["totals"]["throw"], 150)
 
     def test_offline_and_old_build(self):
         self.dash.observe("A", None, -60, mfg(1, state=3), None, now=80.0)
