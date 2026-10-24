@@ -330,13 +330,16 @@ function draw() {
   lastFrame = now;
   for (const b of badges) if (extra(b, now)) { const el = document.querySelector(`[data-air="${b.badge_id}"]`); if (el) el.textContent = fmt(liveAir(b, now)); }
 
-  const L = 24, R = 24, T = 40 + 36 + 22, B = 34, pw = W - L - R, ph = H - T - B, base = T + ph;
+  g.font = `600 13px ${SANS}`;
+  const nameW = Math.max(0, ...badges.map(b => g.measureText(b.name).width));
+  // Names on the left; room on the right for the icon and the value.
+  const L = 24 + nameW + 14, R = 24 + 44 + 84, T = 40, B = 16, pw = W - L - R, ph = H - T - B;
   g.font = `500 11px ${MONO}`; g.fillStyle = INK.muted; g.textAlign = "left"; g.textBaseline = "top";
-  g.fillText("TOTAL AIR TIME", L, 14);
+  g.fillText("TOTAL AIR TIME", 24, 14);
 
-  // Smallest to largest, left to right; ties keep a stable order.
+  // Largest to smallest, top down; ties keep a stable order.
   const shown = badges.filter(b => b.totals).map(b => ({b, air: liveAir(b, now)}))
-    .sort((p, q) => p.air - q.air || p.b.name.localeCompare(q.b.name) || p.b.badge_id.localeCompare(q.b.badge_id));
+    .sort((p, q) => q.air - p.air || p.b.name.localeCompare(q.b.name) || p.b.badge_id.localeCompare(q.b.badge_id));
   for (const id in bars) if (!shown.some(s => s.b.badge_id === id)) delete bars[id];
   if (!shown.length) {
     g.textAlign = "center"; g.textBaseline = "middle"; g.font = `500 12px ${MONO}`;
@@ -346,8 +349,8 @@ function draw() {
   }
   const maxAir = Math.max(1000, ...shown.map(s => s.air));
   scaleTop = scaleTop < maxAir ? maxAir : follow(scaleTop, maxAir, dt, 250);
-  const slotW = pw / shown.length, barW = Math.min(slotW * 0.6, 140);
-  const slotX = slot => L + slot * slotW + slotW / 2;
+  const slotH = ph / shown.length, barH = Math.min(slotH * 0.6, 56);
+  const slotY = slot => T + slot * slotH + slotH / 2;
 
   const items = shown.map(({b, air}, slot) => {
     let a = bars[b.badge_id];
@@ -360,29 +363,29 @@ function draw() {
     const p = Math.min(1, (now - a.start) / SWAP_MS);
     // Live growth is already smooth; ease only jumps such as a reset.
     a.h = Math.abs(air - a.h) < 400 ? air : follow(a.h, air, dt, 120);
-    return {b, a, x: slotX(a.from + (a.to - a.from) * ease(p)), moving: p < 1};
+    return {b, a, y: slotY(a.from + (a.to - a.from) * ease(p)), moving: p < 1};
   });
 
   g.strokeStyle = INK.grid; g.lineWidth = 1;
-  g.beginPath(); g.moveTo(L, base + 0.5); g.lineTo(W - R, base + 0.5); g.stroke();
+  g.beginPath(); g.moveTo(L - 0.5, T); g.lineTo(L - 0.5, T + ph); g.stroke();
   // Moving bars are drawn last, so a swap passes in front of the others.
-  for (const {b, a, x} of items.sort((p, q) => p.moving - q.moving)) {
-    const h = Math.max(2, a.h / scaleTop * ph), top = base - h;
+  for (const {b, a, y} of items.sort((p, q) => p.moving - q.moving)) {
+    const w = Math.max(2, a.h / scaleTop * pw), end = L + w;
     g.globalAlpha = b.online ? 1 : 0.35;
     g.fillStyle = colour(b.badge_id);
-    g.beginPath(); g.roundRect(x - barW / 2, top, barW, h, [6, 6, 0, 0]); g.fill();
+    g.beginPath(); g.roundRect(L, y - barH / 2, w, barH, [0, 6, 6, 0]); g.fill();
     const icon = namesake(b.name);
     if (icon && icon.img) {
-      if (icon.img.complete) g.drawImage(icon.img, x - 18, top - 38, 36, 36);
+      if (icon.img.complete) g.drawImage(icon.img, end + 6, y - 18, 36, 36);
     } else if (icon) {
-      g.font = `30px ${EMOJI_FONT}`; g.textAlign = "center"; g.textBaseline = "bottom";
-      g.fillText(icon, x, top - 2);
+      g.font = `30px ${EMOJI_FONT}`; g.textAlign = "center"; g.textBaseline = "middle";
+      g.fillText(icon, end + 24, y);
     } else {
-      g.beginPath(); g.arc(x, top - 14, 8, 0, 7); g.fill();
+      g.beginPath(); g.arc(end + 24, y, 8, 0, 7); g.fill();
     }
-    g.fillStyle = INK.text; g.textAlign = "center"; g.textBaseline = "bottom";
-    g.font = `600 14px ${MONO}`; g.fillText(fmt(a.h), x, top - 42);
-    g.font = `600 12px ${SANS}`; g.textBaseline = "top"; g.fillText(b.name, x, base + 8);
+    g.fillStyle = INK.text; g.textBaseline = "middle";
+    g.textAlign = "left"; g.font = `600 14px ${MONO}`; g.fillText(fmt(a.h), end + 48, y);
+    g.textAlign = "right"; g.font = `600 13px ${SANS}`; g.fillText(b.name, L - 14, y);
   }
   g.globalAlpha = 1;
   requestAnimationFrame(draw);

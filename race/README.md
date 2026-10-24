@@ -175,13 +175,13 @@ Ways back in:
 `leaderboard.py` follows any number of badges over Wi-Fi: each badge sends a
 UDP status datagram to port 47217 every 250 ms, and at once when its state
 changes. It shows each badge's **air time** (time in the `throw` state) since it was reset,
-and a **total air time** bar chart with one bar per badge, in the badge's
-colour, with its air time since reset above it and its name below. Bars are
-sorted from least to most air time, left to right; when a badge overtakes
-another, the bars slide past each other (600 ms). Offline badges stay on the
+and a **total air time** bar chart with one horizontal bar per badge, in the
+badge's colour, with its name on the left and its air time since reset at the
+right-hand end. Bars are sorted from most to least air time, top down; when a
+badge overtakes another, the bars slide past each other (600 ms). Offline badges stay on the
 chart, faded. A badge named after an animal or a mascot (for example Duckie,
-Squirrel or Copilot) has that picture sitting on top of its bar, and next to
-its name on its card.
+Squirrel or Copilot) has that picture at the right-hand end of its bar, and
+next to its name on its card.
 Duckie is drawn as a yellow rubber duck; Copilot and Mona use the Copilot and
 Octocat marks from Primer Octicons (MIT); Squirrel is the Twemoji squirrel
 (CC-BY 4.0, [jdecked/twemoji](https://github.com/jdecked/twemoji)); the other

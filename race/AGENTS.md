@@ -35,8 +35,8 @@ into Race). Deploy both with `tools/deploy_race.py` (`kiosk`, `app` or
 - `leaderboard.py` with `web/leaderboard.html`: a multi-badge page at
   http://localhost:8766. Badges send UDP status datagrams over Wi-Fi to port
   47217. The page shows air time (time in `throw`) since the last reset, with
-  a bar chart of each badge's air time, sorted smallest to largest with
-  animated swaps. The badge counts the
+  a horizontal bar chart of each badge's air time, sorted largest to smallest
+  from the top, with animated swaps. The badge counts the
   ms per state and sends lifetime totals (saved in `/state`, never reset;
   64-bit ms, 32-bit counts) in each status. The server acks badges
   (so they switch from broadcast to unicast) and sends commands: rename,
