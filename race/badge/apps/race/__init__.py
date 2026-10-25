@@ -406,6 +406,10 @@ class Net:
             kind, _, payload = msg
             if kind == protocol.PKT_ACK:
                 self.throw_offset_ms = protocol.unpack_ack(payload)
+                colour = protocol.unpack_ack_colour(payload)
+                if colour is not None and colour != state_store.get("colour"):
+                    state_store["colour"] = colour
+                    State.save("airtime", state_store)
             if kind in (protocol.PKT_ACK, protocol.PKT_CMD):
                 server = (addr[0], protocol.UDP_PORT)
                 if server != self.server:
@@ -532,20 +536,18 @@ classifier = Classifier()
 link = Net(detector)
 
 # Look of the leaderboard's card for this badge (web/leaderboard.html): its
-# light theme, the badge's colour and its namesake's picture. Keep PALETTE and
-# NAMESAKES in step with the page.
-PALETTE = (
-    (8, 135, 43), (9, 105, 218), (188, 76, 0), (130, 80, 223), (191, 57, 137),
-    (207, 34, 46), (27, 124, 131), (154, 103, 0), (90, 97, 92), (49, 146, 170),
-)
-# (word in the name, PALETTE index, picture in assets/). copilot.png and
-# mona.png are Primer Octicons (MIT); squirrel.png is Twemoji 1f43f (CC-BY 4.0).
+# light theme, the badge's colour and its namesake's picture. The colour is the
+# one the leaderboard gives this badge in its acks (an index into the shared
+# protocol.PALETTE), so no two badges match; until it has one, the badge id picks.
+PALETTE = tuple(tuple(int(h[i:i + 2], 16) for i in (1, 3, 5)) for h in protocol.PALETTE)
+# (word in the name, picture in assets/). copilot.png and mona.png are Primer
+# Octicons (MIT); squirrel.png is Twemoji 1f43f (CC-BY 4.0).
 NAMESAKES = (
-    ("copilot", 1, "copilot"),
-    ("mona", 3, "mona"),
-    ("octocat", 3, "mona"),
-    ("duck", 2, "duck"),
-    ("squirrel", 4, "squirrel"),
+    ("copilot", "copilot"),
+    ("mona", "mona"),
+    ("octocat", "mona"),
+    ("duck", "duck"),
+    ("squirrel", "squirrel"),
 )
 BG = (255, 255, 255)
 INK = (16, 20, 17)
@@ -561,20 +563,22 @@ _theme = {"name": None}
 
 
 def theme():
-    """The badge's colour and picture, worked out again only after a rename."""
-    if _theme["name"] != badge_name:
+    """The badge's colour and picture, worked out again only after a rename or a new colour."""
+    colour = state_store.get("colour")
+    if _theme["name"] != badge_name or _theme.get("colour") != colour:
         key = badge_name.lower()
         hit = None
-        for word, index, picture in NAMESAKES:
+        for word, picture in NAMESAKES:
             if word in key:
-                hit = (index, picture)
+                hit = picture
                 break
         _theme["name"] = badge_name
-        _theme["rgb"] = PALETTE[hit[0] if hit else badge_id % len(PALETTE)]
+        _theme["colour"] = colour
+        _theme["rgb"] = PALETTE[(colour if isinstance(colour, int) else badge_id) % len(PALETTE)]
         _theme["icon"] = None
         if hit:
             try:
-                _theme["icon"] = image.load("assets/%s.png" % hit[1])
+                _theme["icon"] = image.load("assets/%s.png" % hit)
             except (OSError, ValueError):
                 pass
     return _theme

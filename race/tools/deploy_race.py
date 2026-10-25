@@ -1,6 +1,6 @@
 """Deploy the Race app and the kiosk boot script to a badge over USB serial.
 
-    python tools/deploy_race.py app      # app + dist/race_model.py -> /state/apps/race
+    python tools/deploy_race.py app      # app + dist/race_model.py (if built) -> /state/apps/race
     python tools/deploy_race.py kiosk    # also install badge/main.py as /system/main.py
     python tools/deploy_race.py restore  # put the stock /system/main.py back
 
@@ -152,13 +152,16 @@ def mpremote(port, *chain):
 
 
 def app_files(dest):
-    if not MODEL.exists():
-        sys.exit(f"{MODEL} not found; run race_train.py first.")
+    model = []
+    if MODEL.exists():
+        model = [["fs", "cp", str(MODEL), f":{dest}/model.py"]]
+    else:
+        print(f"{MODEL} not found; skipping it (the badge keeps any model it has, else uses its heuristic detector).")
     return [
         ["exec", makedirs(dest)],
         ["fs", "cp", str(APP_SRC), f":{dest}/__init__.py"],
         ["fs", "cp", str(PROTOCOL), f":{dest}/protocol.py"],
-        ["fs", "cp", str(MODEL), f":{dest}/model.py"],
+        *model,
         ["exec", makedirs(f"{dest}/assets")],
         *(["fs", "cp", str(png), f":{dest}/assets/{png.name}"] for png in sorted(APP_ASSETS.glob("*.png"))),
     ]

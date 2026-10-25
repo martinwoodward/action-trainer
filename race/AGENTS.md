@@ -51,10 +51,15 @@ into Race). Deploy both with `tools/deploy_race.py` (`kiosk`, `app` or
   written by `tools/deploy_race.py --wifi-ssid/--wifi-password/--server`
   (or `AIRTIME_WIFI_*` env vars); it falls back to `WIFI_*` in
   `/system/secrets.py`. Never commit Wi-Fi credentials.
-- The race screen mirrors the badge's leaderboard card: keep `PALETTE` and
-  the namesake → colour/picture table identical in
-  `badge/apps/race/__init__.py` and `web/leaderboard.html`. Pictures are
-  24×24 PNGs in `badge/apps/race/assets/`; the deploy tool copies them.
+- The race screen mirrors the badge's leaderboard card. Colours come from
+  `PALETTE` in `protocol.py` (GitHub brand colours): the leaderboard gives each
+  badge its own index, persists it in its state file and sends it in every ack
+  (an optional byte after the reset offset), and the page uses the snapshot's
+  `colour`. The badge's namesake pictures are 24×24 PNGs in
+  `badge/apps/race/assets/`, which the deploy tool copies.
+- The page's pictures and sounds are files in `web/plushies/<name>/`
+  (`icon`, `throw`, `drop`), with `default/` as the fallback; see
+  `web/plushies/README.md`. Don't put icons or sounds inline in the page.
 - `protocol.py`: the advertisement, GATT and UDP formats; the deploy tool
   copies it into the Race app. It's a fork of the root `protocol.py`, kept
   separate so upstream changes don't conflict.

@@ -24,6 +24,13 @@ import protocol
 
 ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "web"
+# One folder per namesake: a badge whose name contains the folder's name uses its
+# icon and sounds (the longest match wins); "default" covers everyone else and any
+# file a folder lacks. See web/plushies/README.md.
+PLUSHIES_DIR = WEB_DIR / "plushies"
+ICON_EXTS = (".svg", ".png", ".webp", ".gif", ".jpg")
+SOUND_EXTS = (".wav", ".ogg", ".mp3", ".m4a", ".webm")  # first found wins; WAV starts quickest
+PLUSHIE_FILES = {"icon": ICON_EXTS, "throw": SOUND_EXTS, "drop": SOUND_EXTS}
 STATE_FILE = ROOT / "leaderboard_state.json"
 STATES = ("still", "throw", "drop")
 # Advertised state codes (protocol.STATE_*) folded into the model's three.
@@ -57,6 +64,27 @@ class Leaderboard:
                 # Cached totals from older builds were per boot; a reset must wait for a lifetime report.
                 for rec in self.badges.values():
                     rec["totals"] = None
+        # Keep each saved colour unless an earlier badge already has it.
+        claimed = set()
+        for badge_id in sorted(self.badges):
+            rec = self.badges[badge_id]
+            colour = rec.get("colour")
+            if isinstance(colour, int) and 0 <= colour < len(protocol.PALETTE) and colour not in claimed:
+                claimed.add(colour)
+            else:
+                rec.pop("colour", None)
+        for badge_id in sorted(self.badges):
+            if "colour" not in self.badges[badge_id]:
+                self.assign_colour(badge_id)
+
+    def assign_colour(self, badge_id):
+        """Give a badge the first palette colour no other badge has; it keeps it after that."""
+        taken = [r.get("colour") for k, r in self.badges.items() if k != badge_id]
+        free = [i for i in range(len(protocol.PALETTE)) if i not in taken]
+        # With more badges than colours, reuse the least-used one.
+        colour = free[0] if free else min(range(len(protocol.PALETTE)), key=taken.count)
+        self.badges[badge_id]["colour"] = colour
+        return colour
 
     def save(self):
         if self.state_file:
@@ -71,6 +99,8 @@ class Leaderboard:
         now = time.time() if now is None else now
         badge_id = "%08x" % mfg["badge_id"]
         rec = self.badges.setdefault(badge_id, {"badge_id": badge_id, "totals": None, "boot": None})
+        if "colour" not in rec:
+            self.assign_colour(badge_id)
         rec.update(address=address, rssi=rssi, seen=now, state=STATE_BY_CODE.get(mfg["state"], "still"),
                    drops=mfg.get("drops"))
         if name:
@@ -102,6 +132,11 @@ class Leaderboard:
         base = self.baselines.get(badge_id)
         return base["ms"]["throw"] if base else 0
 
+    def colour(self, badge_id):
+        """The badge's palette index, sent to it in each ack."""
+        rec = self.badges.get(badge_id)
+        return rec["colour"] if rec and "colour" in rec else protocol.NO_COLOUR
+
     def reset(self, badge_id):
         rec = self.badges.get(badge_id)
         if rec is None or rec["totals"] is None:
@@ -124,6 +159,7 @@ class Leaderboard:
                 {
                     "badge_id": badge_id,
                     "name": rec["name"],
+                    "colour": protocol.PALETTE[rec["colour"] % len(protocol.PALETTE)],
                     "state": rec["state"],
                     "boot": rec["boot"],
                     "drops": rec.get("drops"),  # lifetime count; the page plays UGF when it changes
@@ -138,6 +174,30 @@ class Leaderboard:
             )
         badges.sort(key=lambda b: (b["name"], b["badge_id"]))
         return {"type": "status", "badges": badges}
+
+
+def plushie_manifest(folder=None):
+    """Map each plushie folder name to the URL of its icon, throw and drop files."""
+    folder = Path(folder or PLUSHIES_DIR)
+    out = {}
+    if not folder.is_dir():
+        return out
+    for sub in sorted(p for p in folder.iterdir() if p.is_dir()):
+        files = {}
+        for kind, exts in PLUSHIE_FILES.items():
+            for ext in exts:
+                path = sub / (kind + ext)
+                if path.is_file():
+                    # ?v= changes when the file does, so browsers fetch a replaced file.
+                    files[kind] = "/plushies/%s/%s%s?v=%d" % (sub.name, kind, ext, path.stat().st_mtime)
+                    break
+        if files:
+            out[sub.name.lower()] = files
+    return out
+
+
+async def plushies_manifest(_request):
+    return web.json_response(plushie_manifest(), headers={"Cache-Control": "no-store"})
 
 
 class BadgeLink(asyncio.DatagramProtocol):
@@ -182,7 +242,8 @@ class BadgeLink(asyncio.DatagramProtocol):
         if addr is None or self.transport is None:
             return False
         self.acked[badge_id] = time.time()
-        self.transport.sendto(protocol.pack_ack(int(badge_id, 16), self.dash.offset_ms(badge_id)), addr)
+        self.transport.sendto(protocol.pack_ack(int(badge_id, 16), self.dash.offset_ms(badge_id),
+                                                self.dash.colour(badge_id)), addr)
         return True
 
     def command(self, badge_id, op, arg=b""):
@@ -263,6 +324,9 @@ async def main():
     app = web.Application()
     app.router.add_get("/", index)
     app.router.add_get("/ws", ws_handler)
+    app.router.add_get("/plushies/manifest.json", plushies_manifest)
+    PLUSHIES_DIR.mkdir(parents=True, exist_ok=True)
+    app.router.add_static("/plushies/", PLUSHIES_DIR)
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, "localhost", args.port).start()

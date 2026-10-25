@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 460">
+  <defs>
+    <radialGradient id="skin" cx="0.45" cy="0.3" r="0.8">
+      <stop offset="0" stop-color="#b6ec6a"/>
+      <stop offset="0.5" stop-color="#6cc23a"/>
+      <stop offset="1" stop-color="#3a8a24"/>
+    </radialGradient>
+    <linearGradient id="leg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7fcf43"/>
+      <stop offset="1" stop-color="#3f9128"/>
+    </linearGradient>
+    <linearGradient id="belly" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4f1cf"/>
+      <stop offset="1" stop-color="#d7d39c"/>
+    </linearGradient>
+    <radialGradient id="iris" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0.55" stop-color="#ffcf3a"/>
+      <stop offset="1" stop-color="#c77c0a"/>
+    </radialGradient>
+  </defs>
+  <ellipse cx="240" cy="405" rx="170" ry="18" fill="#000" opacity="0.1"/>
+  <!-- back leg -->
+  <path fill="url(#leg)" d="M78 200c-36 30-40 110-8 146 20 22 60 26 84 6 22-18 18-62 4-96-14-34-46-80-80-56z"/>
+  <path fill="url(#leg)" d="M70 320c4 30 22 52 62 54l56-2c14 0 16-18 2-20l-58-8c-28-4-48-14-62-24z"/>
+  <circle fill="#5fb535" cx="190" cy="362" r="12"/>
+  <circle fill="#5fb535" cx="128" cy="378" r="11"/>
+  <!-- body and head -->
+  <path fill="url(#skin)" d="M100 205c0-62 52-96 118-100l114-12c58-6 86 34 82 80-2 32-30 50-62 64-6 48-34 86-92 88l-74 2c-56 0-86-50-86-122z"/>
+  <path fill="url(#belly)" d="M196 190c34 24 100 34 156 12 2 64-30 110-90 114-40 2-70-22-72-62z"/>
+  <path fill="none" stroke="#2f7a22" stroke-width="5" stroke-linecap="round" d="M196 188c58 26 140 26 214-14"/>
+  <!-- spots -->
+  <g fill="#3f8f2a" opacity="0.75">
+    <ellipse cx="160" cy="140" rx="11" ry="8"/>
+    <ellipse cx="132" cy="166" rx="9" ry="12"/>
+    <ellipse cx="190" cy="124" rx="9" ry="7"/>
+    <ellipse cx="118" cy="200" rx="8" ry="11"/>
+    <ellipse cx="148" cy="190" rx="9" ry="9"/>
+  </g>
+  <!-- eyes -->
+  <ellipse fill="url(#skin)" cx="372" cy="112" rx="40" ry="26"/>
+  <circle fill="url(#skin)" cx="240" cy="126" r="42"/>
+  <circle fill="url(#skin)" cx="384" cy="88" r="32"/>
+  <circle fill="url(#iris)" stroke="#2f7a22" stroke-width="3" cx="242" cy="128" r="31"/>
+  <circle fill="#111" cx="240" cy="128" r="18"/>
+  <circle fill="#fff" cx="232" cy="119" r="6"/>
+  <circle fill="url(#iris)" stroke="#2f7a22" stroke-width="3" cx="388" cy="90" r="23"/>
+  <circle fill="#111" cx="393" cy="90" r="13"/>
+  <circle fill="#fff" cx="388" cy="84" r="4.5"/>
+  <circle fill="#2f6e22" cx="332" cy="148" r="3"/>
+  <circle fill="#2f6e22" cx="356" cy="144" r="3"/>
+  <!-- front legs -->
+  <path fill="url(#leg)" d="M200 228c-22 40-18 96 8 134 8 10 32 10 36-2-12-36-12-80 6-116 10-20-38-34-50-16z"/>
+  <g fill="#5fb535" stroke="#5fb535" stroke-width="12" stroke-linecap="round">
+    <path fill="none" d="M226 362l-22 22M230 366l4 30M234 362l34 14"/>
+    <circle cx="202" cy="388" r="6"/>
+    <circle cx="235" cy="400" r="6"/>
+    <circle cx="272" cy="378" r="6"/>
+  </g>
+  <path fill="url(#leg)" d="M320 244c-8 32 0 64 18 88 6 8 22 6 24-4-10-24-14-52-8-80 4-14-30-20-34-4z"/>
+  <g fill="#5fb535" stroke="#5fb535" stroke-width="10" stroke-linecap="round">
+    <path fill="none" d="M346 332l-12 20M350 334l22 10M352 330l26-4"/>
+    <circle cx="332" cy="355" r="5"/>
+    <circle cx="375" cy="346" r="5"/>
+    <circle cx="382" cy="325" r="5"/>
+  </g>
+  <!-- shine -->
+  <ellipse cx="300" cy="120" rx="36" ry="12" fill="#fff" opacity="0.25" transform="rotate(-8 300 120)"/>
+</svg>
