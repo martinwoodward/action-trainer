@@ -1,11 +1,12 @@
 """Wire formats, the leaderboard's UDP link and its aggregation of per-state totals."""
 import asyncio
+import os
 import tempfile
 import unittest
 from pathlib import Path
 
 import protocol
-from leaderboard import BadgeLink, Leaderboard
+from leaderboard import BadgeLink, Leaderboard, plushie_manifest
 
 
 def mfg(boot, state=0, badge_id=0xC03CFD52):
@@ -53,6 +54,19 @@ class UdpFormatTests(unittest.TestCase):
         self.assertEqual((kind, badge_id, protocol.unpack_ack(payload)), (protocol.PKT_ACK, 9, 2**33))
         self.assertEqual(protocol.unpack_ack(b""), 0)
 
+    def test_ack_carries_an_optional_colour(self):
+        _, _, payload = protocol.unpack_payload(protocol.pack_ack(9, 600, 7))
+        self.assertEqual((protocol.unpack_ack(payload), protocol.unpack_ack_colour(payload)), (600, 7))
+        _, _, payload = protocol.unpack_payload(protocol.pack_ack(9, 600))
+        self.assertIsNone(protocol.unpack_ack_colour(payload))
+        self.assertIsNone(protocol.unpack_ack_colour(payload[:8]))  # an older leaderboard's ack
+
+    def test_palette_is_distinct_brand_hex(self):
+        self.assertEqual(len(set(protocol.PALETTE)), len(protocol.PALETTE))
+        self.assertLess(len(protocol.PALETTE), protocol.NO_COLOUR)
+        for c in protocol.PALETTE:
+            self.assertRegex(c, r"^#[0-9A-F]{6}$")
+
     def test_name_is_truncated_and_bad_packets_rejected(self):
         st = protocol.unpack_status(status_packet(name="a-very-long-badge-name"))
         self.assertEqual(st["name"], "a-very-long-badg")
@@ -91,14 +105,14 @@ class BadgeLinkTests(unittest.TestCase):
         self.assertEqual(badge["totals"], {"still": 900, "throw": 650, "drop": 0})
         self.assertEqual(badge["drops"], 2)  # the page plays UGF when this changes
         self.assertTrue(self.heard.is_set())
-        self.assertEqual(self.transport.sent, [(protocol.pack_ack(0xC03CFD52), addr)])  # once per ACK_EVERY_S
+        self.assertEqual(self.transport.sent, [(protocol.pack_ack(0xC03CFD52, 0, 0), addr)])  # once per ACK_EVERY_S
 
     def test_ping_is_always_acked_at_once(self):
         addr = ("192.168.9.211", 47217)
         self.link.datagram_received(status_packet(), addr)  # acked, starts the ACK_EVERY_S timer
         self.link.datagram_received(protocol.pack_ping(0xC03CFD52), addr)
         self.link.datagram_received(protocol.pack_ping(0xC03CFD52), addr)
-        self.assertEqual(self.transport.sent, [(protocol.pack_ack(0xC03CFD52), addr)] * 3)
+        self.assertEqual(self.transport.sent, [(protocol.pack_ack(0xC03CFD52, 0, 0), addr)] * 3)
 
     def test_acks_carry_the_offset_after_a_reset(self):
         addr = ("192.168.9.208", 47217)
@@ -106,7 +120,7 @@ class BadgeLinkTests(unittest.TestCase):
         self.link.datagram_received(status_packet(throw=600), addr)
         self.dash.reset("c03cfd52")
         self.assertTrue(self.link.ack("c03cfd52"))
-        self.assertEqual(self.transport.sent[-1], (protocol.pack_ack(0xC03CFD52, 600), addr))
+        self.assertEqual(self.transport.sent[-1], (protocol.pack_ack(0xC03CFD52, 600, 0), addr))
 
     def test_commands_go_to_the_last_address_and_replies_are_routed(self):
         self.assertFalse(self.link.command("c03cfd52", protocol.CMD_IDENTIFY))  # never heard
@@ -184,6 +198,45 @@ class LeaderboardTests(unittest.TestCase):
         self.assertIsNone(badge["totals"])
         self.assertEqual(badge["state"], "throw")
         self.assertFalse(self.dash.reset("c03cfd52"))
+
+    def test_each_badge_gets_its_own_colour_and_keeps_it(self):
+        n = len(protocol.PALETTE)
+        for i in range(n):
+            self.dash.observe("A", "b%d" % i, -50, mfg(1, badge_id=0x1000 + i), None, now=100.0)
+        colours = {b["badge_id"]: b["colour"] for b in self.dash.snapshot(now=100.0)["badges"]}
+        self.assertEqual(len(set(colours.values())), n)
+        self.assertEqual(colours["00001000"], protocol.PALETTE[0])
+        self.assertEqual(self.dash.colour("00001003"), 3)
+        self.assertEqual(self.dash.colour("ffffffff"), protocol.NO_COLOUR)
+        self.dash.observe("A", "extra", -50, mfg(1, badge_id=0x2000), None, now=100.0)  # more badges than colours
+        self.dash.reset_all()  # saves
+        self.assertEqual(Leaderboard(self.state_file).colour("00001003"), 3)
+
+    def test_duplicate_saved_colours_are_reassigned(self):
+        self.state_file.write_text('{"badges": {"a": {"badge_id": "a", "colour": 2}, "b": {"badge_id": "b", "colour": 2},'
+                                   ' "c": {"badge_id": "c"}}}', encoding="utf-8")
+        dash = Leaderboard(self.state_file)
+        self.assertEqual((dash.colour("a"), dash.colour("b"), dash.colour("c")), (2, 0, 1))
+
+
+class PlushieManifestTests(unittest.TestCase):
+    def test_lists_files_preferring_the_first_extension(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            for f in ("default/icon.svg", "default/throw.mp3", "default/throw.wav", "default/drop.wav",
+                      "Copilot/icon.png", "Copilot/notes.txt", "empty/readme.md"):
+                (root / f).parent.mkdir(exist_ok=True)
+                (root / f).write_bytes(b"x")
+                os.utime(root / f, (1700000000, 1700000000))
+            v = "?v=1700000000"
+            self.assertEqual(plushie_manifest(root), {
+                "copilot": {"icon": "/plushies/Copilot/icon.png" + v},
+                "default": {"icon": "/plushies/default/icon.svg" + v, "throw": "/plushies/default/throw.wav" + v,
+                            "drop": "/plushies/default/drop.wav" + v},
+            })
+
+    def test_shipped_default_is_complete(self):
+        self.assertEqual(set(plushie_manifest()["default"]), {"icon", "throw", "drop"})
 
 
 if __name__ == "__main__":

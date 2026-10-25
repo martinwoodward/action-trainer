@@ -232,11 +232,30 @@ def unpack_status(data):
     return out
 
 
+# Badge colours, from the GitHub brand palette (brand.github.com/foundations/color):
+# the Green, Copilot Purple, Orange, Security Blue and Lime ramps. Hues are
+# interleaved, mid tones first, so the first badges get the most distinct colours.
+# The leaderboard gives each badge its own index (in the ack); the page and the
+# badge screen both draw from this list.
+PALETTE = (
+    "#0FBF3E", "#8534F3", "#FE4C25", "#3094FF", "#DB9D00",
+    "#08872B", "#43179E", "#C53211", "#0527FC", "#D67200",
+    "#5FED83", "#B870FF", "#F08A3A", "#1A61FE", "#D8BD0E",
+    "#0A241B", "#26115F", "#801E0F", "#212183", "#703100",
+    "#8CF2A6", "#C898FD", "#F4A876", "#9EECFF", "#D3FA37",
+)
+
+
 ACK_BODY = "<Q"  # throw_ms at the badge's last leaderboard reset (0 = never reset)
+# Optional byte after ACK_BODY: the badge's colour, an index into the shared
+# palette that the leaderboard assigns so no two badges share one. Older
+# badges ignore it; NO_COLOUR (or a short ack) keeps the badge's own choice.
+ACK_COLOUR = "<B"
+NO_COLOUR = 0xFF
 
 
-def pack_ack(badge_id, offset_ms=0):
-    return _header(PKT_ACK, badge_id) + struct.pack(ACK_BODY, offset_ms)
+def pack_ack(badge_id, offset_ms=0, colour=NO_COLOUR):
+    return _header(PKT_ACK, badge_id) + struct.pack(ACK_BODY, offset_ms) + struct.pack(ACK_COLOUR, colour & 0xFF)
 
 
 def unpack_ack(payload):
@@ -244,6 +263,15 @@ def unpack_ack(payload):
     if len(payload) < struct.calcsize(ACK_BODY):
         return 0
     return struct.unpack_from(ACK_BODY, payload, 0)[0]
+
+
+def unpack_ack_colour(payload):
+    """Return the palette index from a PKT_ACK payload, else None."""
+    at = struct.calcsize(ACK_BODY)
+    if len(payload) < at + 1:
+        return None
+    colour = struct.unpack_from(ACK_COLOUR, payload, at)[0]
+    return None if colour == NO_COLOUR else colour
 
 
 def pack_cmd(badge_id, op, arg=b""):

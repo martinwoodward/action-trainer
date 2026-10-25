@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
+  <defs>
+    <radialGradient id="body" cx="0.42" cy="0.3" r="0.75">
+      <stop offset="0" stop-color="#4a5550"/>
+      <stop offset="0.45" stop-color="#22282a"/>
+      <stop offset="1" stop-color="#0c0f10"/>
+    </radialGradient>
+    <radialGradient id="belly" cx="0.45" cy="0.3" r="0.8">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.6" stop-color="#e6ebe4"/>
+      <stop offset="1" stop-color="#b9c4b6"/>
+    </radialGradient>
+    <linearGradient id="orange" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd84a"/>
+      <stop offset="0.55" stop-color="#ffb20f"/>
+      <stop offset="1" stop-color="#e88a00"/>
+    </linearGradient>
+    <radialGradient id="eye" cx="0.4" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#d3dbd2"/>
+    </radialGradient>
+  </defs>
+  <!-- Traced facing left, then mirrored so Tux faces right. -->
+  <g transform="translate(500 0) scale(-1 1)">
+    <ellipse cx="260" cy="452" rx="185" ry="16" fill="#000" opacity="0.12"/>
+    <path fill="url(#body)" d="M290 16C246 16 224 52 221 96c-3 44-18 70-48 96-44 38-68 86-66 142 2 54 38 92 98 98h178c52-8 78-46 72-106-6-60-38-106-52-158-10-36-6-70-22-104-14-30-44-48-91-48z"/>
+    <path fill="url(#belly)" d="M232 148c-44 8-72 56-76 118-4 72 34 128 96 128 58 0 90-48 86-112-4-70-46-142-106-134z"/>
+    <path fill="#151a1b" d="M340 270c-38-6-62 18-60 52 2 30 30 44 56 38 18-4 22-82 4-90z"/>
+    <ellipse fill="url(#eye)" cx="250" cy="78" rx="17" ry="24"/>
+    <ellipse fill="url(#eye)" cx="295" cy="76" rx="21" ry="27"/>
+    <ellipse fill="#111" cx="257" cy="86" rx="9" ry="11"/>
+    <ellipse fill="#111" cx="292" cy="86" rx="10" ry="12"/>
+    <circle fill="#fff" cx="260" cy="81" r="3"/>
+    <circle fill="#fff" cx="296" cy="81" r="3.5"/>
+    <path fill="url(#orange)" stroke="#c97200" stroke-width="3" d="M212 104c20-20 58-24 92-12 22 8 24 20 14 32-16 20-46 28-70 22-22-6-36-20-36-42z"/>
+    <path fill="none" stroke="#a85c00" stroke-width="3" stroke-linecap="round" d="M222 112c26 8 54 8 82 0"/>
+    <path fill="url(#orange)" stroke="#c97200" stroke-width="3" d="M96 291c-20 2-24 22-12 34-20 6-28 22-20 38 16 38 44 66 76 74 30 8 52-12 52-42 0-36-30-76-52-96-14-12-28-10-44-8z"/>
+    <path fill="url(#orange)" stroke="#c97200" stroke-width="3" d="M346 304c-26 0-32 24-26 40-20-10-50-10-62 6-14 18-4 50 16 74 26 32 72 46 118 38 36-6 54-32 50-62 10-20 8-56-12-64-16-6-30-2-40 8-10-26-26-40-44-40z"/>
+    <path fill="#fff" opacity="0.35" d="M98 300c-10 2-10 12-4 18 10-6 20-8 30-4-6-10-16-16-26-14zM352 314c-12 0-16 10-14 20 10-6 22-6 30 0-2-10-8-20-16-20z"/>
+  </g>
+</svg>
