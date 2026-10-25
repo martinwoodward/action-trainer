@@ -50,9 +50,18 @@ sleeps.
 
 ## 3. Start it
 
-Ask the user to **press the badge's reset button**. Don't use
-`mpremote reset` to test autostart: it is a watchdog reset, which (like
-leaving the app) deliberately boots into the menu.
+Restart the badge yourself straight after installing:
+
+```powershell
+python -m mpremote connect <port> reset
+```
+
+Then wait for the port to come back (rerun `python -m mpremote devs`; the name
+can change). This is a watchdog reset, which (like leaving the app)
+deliberately boots into the menu and skips autostart. After an `--autostart`
+install, tell the user that autostart applies from the next power-on,
+reset-button press or wake. Don't use `powman.goto_dormant_*` to restart; the
+badge may not come back on USB until the reset button is pressed.
 
 To watch the app's output instead, use `--run` (Ctrl+C detaches; the app
 keeps running). Errors and `print` output from the app appear there.

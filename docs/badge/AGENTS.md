@@ -33,12 +33,22 @@ badge/
     └── my_app/
         ├── __init__.py
         ├── icon.png
+        ├── README.md
         └── assets/
 ```
 
 An app directory is discovered when it contains `__init__.py` or
-`__init__.mpy`. Include a 24x24 `icon.png`; the menu falls back to its default
-icon when one is absent, but new apps should provide one.
+`__init__.mpy`. Include an `icon.png` (24x24 minimum; the menu scales it into
+its tile, so a larger square image such as 48x48 looks sharper); the menu falls
+back to its default icon when one is absent, but new apps should provide one.
+
+Every app must have a `README.md`. Its first paragraph (after the title) is the
+app's description: one short plain-text sentence (10-200 characters, ending in
+punctuation) saying what the app is. Follow it with usage instructions and any
+extra hardware, Wi-Fi or `secrets.py` requirements, and ideally a screenshot.
+The `Validate app READMEs` check enforces this on pull requests
+(`python .github/scripts/validate_app_readmes.py badge/apps`), and the first
+sentence is used to build `app-descriptions.json` in badger/badgerfactory.
 
 Use an explicit application directory so local modules and relative assets
 resolve correctly:
@@ -257,6 +267,30 @@ Important application-facing facts:
 Prefer firmware APIs and `machine.Pin.board` aliases. Never use numeric GPIOs
 without checking the hardware reference and existing firmware behavior.
 
+## Testing in the Badge Simulator canvas
+
+In the GitHub Copilot app, test in the simulator first: when asked to build,
+run or deploy an app, open it in the Badge Simulator canvas, check it, and remind
+the user to press the canvas **Deploy** button when they are ready to install it
+on the badge. Deploy directly only when asked to skip the simulator, the request
+came from the Deploy button, or the canvas is unavailable.
+
+Before deploying, run the app in the Badge Simulator canvas
+(`.github/extensions/badge-simulator/`). Open it with `open_canvas`,
+`canvasId: "badge-simulator"` and `input: { "app": "<app folder>" }`. It reruns
+the app whenever a file in `badge/apps/<app>` changes. Use the
+`get_output`, `screenshot`, `press`, `load_app` and `reload` canvas actions to
+check tracebacks, rendering and input, `exec` to inspect or change the running
+app's globals, `wait_for` and `run_script` for repeatable tests, `rotate` for
+the upside-down orientation, and `check_app` for pre-flight checks before a
+pull request. `get_output` reports the last error's `badge/apps/...:line`
+location. Its **Deploy** button asks Copilot to
+install the app on the connected badge over USB mass storage, following
+"Installing an app" in the USB serial guide, which includes applying the menu
+icon patch when the badge's menu lacks it, then reboots the badge back to the
+menu with `mpremote connect <port> reset`. The simulator
+approximates the firmware, so confirm on hardware, in both orientations.
+
 ## Working with a connected badge
 
 The badge exposes a MicroPython USB serial interface. Use `mpremote` and follow
@@ -301,8 +335,7 @@ Use these current 2026 examples:
 | --- | --- |
 | `apps/input_test/` | Capacitive input, physical input, direction, IMU, HIRES |
 | `apps/menu/` | Launcher return values, pagination, transforms |
-| `apps/plucky_cluck/` | Frame-rate-independent game loop and sprites |
-| `apps/flappy/` | Ported 2025 game using the 2026 API |
+| `apps/flappy_mona/` | Frame-rate-independent game loop and sprites; ported 2025 game using the 2026 API |
 | `apps/gallery/` | Image loading and navigation |
 | `apps/sense/` | External Qw/ST I2C sensor use |
 | `apps/demos/` | Graphics, brush, text, and transform techniques |
