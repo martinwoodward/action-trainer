@@ -4,10 +4,12 @@
     python tools/deploy_race.py kiosk    # also install badge/main.py as /system/main.py
     python tools/deploy_race.py restore  # put the stock /system/main.py back
 
-Wi-Fi: `app` and `kiosk` take --wifi-ssid/--wifi-password (or the
+Wi-Fi: `app` and `kiosk` read `ssid`, `password` and `server` from wifi.json
+(gitignored; copy wifi.example.json). --wifi-ssid/--wifi-password (or the
 AIRTIME_WIFI_SSID/AIRTIME_WIFI_PASSWORD environment variables) and --server
-(an IP, `auto` for this computer's address, or `none` to broadcast). They are
-merged into /state/airtime_net.json on the badge; settings not given are kept.
+(an IP, `auto` for this computer's address, or `none` to broadcast) override
+it. They are merged into /state/airtime_net.json on the badge; settings not
+given are kept.
 Without an SSID there, the badge falls back to WIFI_SSID in /system/secrets.py.
 The password is never printed or written into this repository.
 
@@ -33,6 +35,7 @@ MODEL = ROOT / "dist" / "race_model.py"
 KIOSK_MAIN = ROOT / "badge" / "main.py"
 STOCK_MAIN = ROOT / "badge" / "main.orig.py"
 USB_ID = "2e8a:1101"
+WIFI_FILE = ROOT / "wifi.json"
 
 NET_CONFIG = "/state/airtime_net.json"
 NET_UPLOAD = "/state/airtime_net.new"
@@ -109,16 +112,33 @@ def local_ip():
         return s.getsockname()[0]
 
 
-def net_settings(args):
+def load_wifi_file(path=WIFI_FILE):
+    """Local Wi-Fi settings from the gitignored wifi.json, or {} if it's missing."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except ValueError as e:
+        sys.exit(f"{path}: invalid JSON ({e})")
+    if not isinstance(data, dict):
+        sys.exit(f"{path}: expected a JSON object")
+    return {k: str(data[k]) for k in ("ssid", "password", "server") if data.get(k) is not None}
+
+
+def net_settings(args, wifi_file=WIFI_FILE):
     out = {}
-    ssid = args.wifi_ssid or os.environ.get("AIRTIME_WIFI_SSID")
-    password = args.wifi_password or os.environ.get("AIRTIME_WIFI_PASSWORD")
+    local = load_wifi_file(wifi_file)
+    ssid = args.wifi_ssid or os.environ.get("AIRTIME_WIFI_SSID") or local.get("ssid")
+    password = args.wifi_password
+    if password is None:
+        password = os.environ.get("AIRTIME_WIFI_PASSWORD", local.get("password"))
+    server = args.server or local.get("server")
     if ssid:
         out["ssid"] = ssid
     if password is not None:
         out["password"] = password
-    if args.server:
-        out["server"] = "" if args.server == "none" else local_ip() if args.server == "auto" else args.server
+    if server:
+        out["server"] = "" if server == "none" else local_ip() if server == "auto" else server
     return out
 
 
@@ -218,9 +238,9 @@ def main():
     kiosk = sub.add_parser("kiosk", help="install the app and the kiosk /system/main.py")
     kiosk.set_defaults(func=deploy_kiosk)
     for p in (app, kiosk):
-        p.add_argument("--wifi-ssid", help="Wi-Fi network (default: $AIRTIME_WIFI_SSID, else keep)")
-        p.add_argument("--wifi-password", help="Wi-Fi password (default: $AIRTIME_WIFI_PASSWORD, else keep)")
-        p.add_argument("--server", help="leaderboard IP, 'auto' (this computer) or 'none' (broadcast)")
+        p.add_argument("--wifi-ssid", help="Wi-Fi network (default: $AIRTIME_WIFI_SSID, then wifi.json, else keep)")
+        p.add_argument("--wifi-password", help="Wi-Fi password (default: $AIRTIME_WIFI_PASSWORD, then wifi.json, else keep)")
+        p.add_argument("--server", help="leaderboard IP, 'auto' (this computer) or 'none' (broadcast); default: wifi.json")
     sub.add_parser("restore", help="restore the stock /system/main.py").set_defaults(func=restore)
     args = parser.parse_args()
     args.func(args.port or find_port(), args)
