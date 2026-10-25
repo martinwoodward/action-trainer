@@ -1,0 +1,84 @@
+{
+  "samples": 2288,
+  "labels": {
+    "still": 1510,
+    "throw": 778
+  },
+  "sessions": {
+    "landings": 3,
+    "mixed": 2
+  },
+  "windows_per_label": {
+    "landings": 842,
+    "mixed": 1446
+  },
+  "states": [
+    "still",
+    "throw",
+    "drop"
+  ],
+  "airborne_rule": {
+    "labels": [
+      "throw",
+      "drop"
+    ],
+    "freefall_g": 0.4,
+    "min_airborne_ms": 150,
+    "otherwise": "still when no free fall; skipped when partial"
+  },
+  "max_depth": 6,
+  "actual_depth": 5,
+  "grouped_validation": {
+    "status": "available",
+    "reason": null,
+    "accuracy": 0.9965034965034965,
+    "labels": [
+      "still",
+      "throw"
+    ],
+    "confusion_matrix": [
+      [
+        1507,
+        3
+      ],
+      [
+        5,
+        773
+      ]
+    ]
+  },
+  "landing": {
+    "landings": {
+      "caught": 51,
+      "dropped": 52
+    },
+    "trained": true,
+    "delay_ms": 0,
+    "window_ms": 500,
+    "features": [
+      "accel_mag_mean",
+      "accel_mag_std",
+      "accel_mag_min",
+      "accel_mag_max",
+      "gyro_mag_std",
+      "gyro_axis_std",
+      "accel_axis_std"
+    ],
+    "max_depth": 2,
+    "prior": 2,
+    "drop_confidence": 0.85,
+    "validation": {
+      "status": "available",
+      "method": "leave one session out",
+      "caught_landings": 51,
+      "dropped_landings": 52,
+      "false_drops": 1,
+      "missed_drops": 12,
+      "skipped_landings": 0,
+      "majority_false_drops": 4,
+      "majority_missed_drops": 7
+    }
+  },
+  "model": "dist/model.py",
+  "default_action": "still"
+}
