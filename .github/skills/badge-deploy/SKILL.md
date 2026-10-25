@@ -1,12 +1,17 @@
 ---
 name: badge-deploy
-description: Install, test and debug the Airtime badge app (badge/apps/airtime) on a GitHub Universe badge over USB serial, including autostart, naming, model install and checking it over BLE. Use whenever the user asks to deploy, install, flash, test or debug the app on the badge.
+description: Install, test and debug the Airtime badge app (badge/apps/airtime) on a GitHub Universe badge over USB serial, including autostart, naming, model install and checking it over BLE. Use whenever the user asks to deploy, install, flash, test or debug the app on the badge; it first asks whether to flash Airtime or Race.
 ---
 
 # Deploy Airtime to a badge
 
 Read `docs/badge/USB_SERIAL.md` first if you haven't. Paths below are relative
 to the repository root.
+
+**First, ask the user whether they want Airtime or Race** (use the ask_user
+tool). For Race, follow "Flashing a badge" in
+`.github/copilot-instructions.md` (it checks for `race/wifi.json` and uses
+`race/tools/deploy_race.py kiosk`) instead of the steps below.
 
 ## 1. Find the badge
 
