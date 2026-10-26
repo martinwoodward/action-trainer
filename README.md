@@ -116,6 +116,17 @@ one if it scores at least as well. Otherwise it keeps the current model and
 offers **Deploy anyway**. The deployed model and its scorecard are kept in
 `dist/deployed_model.py` and `dist/deployed.json`.
 
+For demos, the live chart starts without the walk, flying, throw and drop
+colours, and the recorder plays no sounds. After a guided **Walk** run and
+**Train & deploy**, walk shows on the chart. After guided **Throw** and
+**Drop** runs and another deploy, flying, throw and drop show too. The page
+then plays the race leaderboard's squirrel sounds (`web/sounds/`), a throw
+sound when the badge leaves the ground and a drop sound when it reports a drop.
+**Reset demo** in Settings goes back to the start. It hides the model here and
+on the badge and turns the colours and sounds off. Only guided runs after the
+reset count again; recordings are kept. The reset state is saved in
+`dist/demo.json`.
+
 To ship a model with another app, copy the reviewed `model.py` into that app
 in `badger/home` and use its deployment workflow.
 

@@ -1,5 +1,6 @@
 """Model upload over the control characteristic, against a fake badge."""
 import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -53,7 +54,7 @@ class DeployTests(unittest.TestCase):
 class GateTests(unittest.TestCase):
     """Train & deploy keeps the badge's model when the new one scores worse."""
 
-    def run_round(self, rec, dist, new_acc, baseline_acc, force=False):
+    def run_round(self, rec, dist, new_acc, baseline_acc, force=False, data=None):
         def fake_train(_data, output, baseline):
             output.write_text(f"# model {new_acc}")
             test = {"accuracy": new_acc, "recall": {"walk": new_acc}}
@@ -70,7 +71,9 @@ class GateTests(unittest.TestCase):
         with mock.patch.multiple(recorder, MODEL_PATH=dist / "model.py",
                                  DEPLOYED_MODEL=dist / "deployed_model.py",
                                  DEPLOYED_CARD=dist / "deployed.json",
-                                 MODEL_HIDDEN=dist / "model_hidden"), \
+                                 MODEL_HIDDEN=dist / "model_hidden",
+                                 DEMO_STATE=dist / "demo.json",
+                                 DATA_DIR=data or dist / "data"), \
                 mock.patch.object(recorder.trainer, "train", fake_train):
             asyncio.run(rec.train_and_deploy(force))
             return sent[-1], rec.model_card()
@@ -83,14 +86,13 @@ class GateTests(unittest.TestCase):
             rec.hide_model = False
             self.run_round(rec, dist, 0.9, None)
             rec.hide_model = True
-            (dist / "model_hidden").touch()
 
             msg, card = self.run_round(rec, dist, 0.5, 0.9)
             self.assertIsNotNone(msg["deployed"])
             self.assertIsNone(card["kept"])
             self.assertIsNone(card["deployed"]["previous"])
             self.assertFalse(card["hidden"])
-            self.assertFalse((dist / "model_hidden").exists())
+            self.assertFalse(json.loads((dist / "demo.json").read_text())["hidden"])
             self.assertEqual((dist / "deployed_model.py").read_text(), "# model 0.5")
 
     def test_worse_model_is_kept_back_unless_forced(self):
@@ -121,6 +123,52 @@ class GateTests(unittest.TestCase):
             msg, card = self.run_round(rec, dist, 0.5, 0.9)
             self.assertIsNotNone(msg["deployed"])
             self.assertEqual((dist / "deployed_model.py").read_text(), "# model 0.5")
+
+
+class UnlockTests(unittest.TestCase):
+    """Chart colours and squirrel sounds follow the guided runs a deployed model was trained after."""
+
+    @staticmethod
+    def guided(data, stem, kind, started, reason="stopped"):
+        folder = data / "recordings"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / (stem + ".json")).write_text(json.dumps(
+            {"notes": "guided " + kind, "started": started, "end_reason": reason}))
+
+    def test_unlocks_after_deploy_and_reset_locks_again(self):
+        with tempfile.TemporaryDirectory() as temp:
+            dist, data = Path(temp) / "dist", Path(temp) / "data"
+            dist.mkdir()
+            rec, badge = Recorder(), FakeBadge()
+            rec.client, rec.hide_model, rec.reset_at = badge, False, None
+            round_ = GateTests.run_round
+            self.guided(data, "a", "walk", "2026-10-25T10:00:00")
+            self.guided(data, "b", "throw", "2026-10-25T10:01:00", reason="disconnected")
+            _, card = round_(self, rec, dist, 0.9, None, force=True, data=data)
+            self.assertEqual(card["unlocked"], ["walk"])
+
+            self.guided(data, "c", "throw", "2026-10-25T10:02:00")
+            self.guided(data, "d", "drop", "2026-10-25T10:03:00")
+            rec.guided = None
+            _, card = round_(self, rec, dist, 0.9, None, force=True, data=data)
+            self.assertEqual(card["unlocked"], ["drop", "throw", "walk"])
+
+            with mock.patch.multiple(recorder, DEMO_STATE=dist / "demo.json", MODEL_HIDDEN=dist / "model_hidden",
+                                     DEPLOYED_CARD=dist / "deployed.json", DATA_DIR=data):
+                asyncio.run(rec.reset_demo())
+                card = rec.model_card()
+                self.assertTrue(card["hidden"])
+                self.assertEqual(card["unlocked"], [])
+                self.assertEqual(card["guided"], [])
+                self.assertEqual(recorder.load_demo(), (True, rec.reset_at))
+
+            # Runs from before the reset don't count; only a new run plus a deploy unlocks it.
+            _, card = round_(self, rec, dist, 0.9, None, force=True, data=data)
+            self.assertEqual(card["unlocked"], [])
+            self.guided(data, "e", "walk", "9999-01-01T00:00:00")
+            rec.guided = None
+            _, card = round_(self, rec, dist, 0.9, None, force=True, data=data)
+            self.assertEqual(card["unlocked"], ["walk"])
 
 
 class DeadBadge:

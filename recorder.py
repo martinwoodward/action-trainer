@@ -69,7 +69,12 @@ MODEL_PATH = DIST_DIR / "model.py"
 # The last model that reached a badge, and its test-set scorecard.
 DEPLOYED_MODEL = DIST_DIR / "deployed_model.py"
 DEPLOYED_CARD = DIST_DIR / "deployed.json"
-MODEL_HIDDEN = DIST_DIR / "model_hidden"  # present while the demo "hide the model" setting is on
+MODEL_HIDDEN = DIST_DIR / "model_hidden"  # older recorders' "hide the model" flag; read once
+# Demo reset: whether the model is hidden, and when training last started over.
+DEMO_STATE = DIST_DIR / "demo.json"
+# Guided runs that, once deployed since the last reset, unlock chart colours and squirrel sounds.
+GUIDED_RUNS = ("walk", "throw", "drop")
+SOUNDS_DIR = WEB_DIR / "sounds"
 LABELS = ("throw", "drop", "still", "walk", "unknown")
 SEGMENT_LABELS = LABELS + ("ignore",)
 GUIDE_REACTION_MS = 1000  # skip this long after each guided cue while the user reacts
@@ -77,6 +82,30 @@ STATE_NAMES = ("STILL", "WALK", "FLYING", "THROW", "DROP", "HANDLING")
 FLYING = 2
 LSB_PER_G = 16384.0
 CSV_HEADER = ("t_ms", "ax", "ay", "az", "gx", "gy", "gz", "events", "state")
+
+
+def load_demo():
+    """(model hidden, reset time) from the demo state file."""
+    try:
+        state = json.loads(DEMO_STATE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {"hidden": MODEL_HIDDEN.exists()}
+    return bool(state.get("hidden")), state.get("reset_at")
+
+
+def guided_runs(data_dir, since=None):
+    """Kinds of guided run (walk, throw, drop) that ran to the end, started at or after `since`."""
+    done = set()
+    for path in (data_dir / trainer.RECORDINGS).glob("*.json"):
+        try:
+            meta = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        notes = str(meta.get("notes") or "")
+        if (notes.startswith("guided ") and meta.get("end_reason") == "stopped"
+                and (since is None or str(meta.get("started") or "") >= since)):
+            done.add(notes.split(" ", 1)[1])
+    return done
 
 
 class Recorder:
@@ -87,7 +116,9 @@ class Recorder:
         self.client = None
         self.kept = None
         self.address = None
-        self.hide_model = MODEL_HIDDEN.exists()  # demo: show "no model" in the UI and on the badge until the next training run
+        # Demo: show "no model" in the UI and on the badge until the next training run.
+        self.hide_model, self.reset_at = load_demo()
+        self.guided = None  # cached guided runs finished since reset_at; reset on save
         self.target = None  # badge to stay connected to; cleared by an explicit disconnect
         self.retry_at = 0.0
         self.retry_delay = 0.0
@@ -241,24 +272,43 @@ class Recorder:
             return None
         return card
 
+    def guided_done(self):
+        """Guided runs finished since the last demo reset."""
+        if self.guided is None:
+            self.guided = guided_runs(DATA_DIR, self.reset_at) & set(GUIDED_RUNS)
+        return self.guided
+
     def model_card(self):
-        """Scorecard of the model on the badge, plus a rejected candidate if any."""
-        return {"deployed": self.deployed_card(), "kept": self.kept, "hidden": self.hide_model}
+        """Scorecard of the model on the badge, plus a rejected candidate if any.
+        `unlocked` lists the guided runs the deployed model was trained after, which
+        turn on the chart colours (walk; throw + drop) and the squirrel sounds."""
+        card = self.deployed_card()
+        unlocked = [] if self.hide_model or card is None else card.get("unlocked", [])
+        return {"deployed": card, "kept": self.kept, "hidden": self.hide_model,
+                "unlocked": unlocked, "guided": sorted(self.guided_done())}
+
+    def save_demo(self):
+        DEMO_STATE.parent.mkdir(parents=True, exist_ok=True)
+        DEMO_STATE.write_text(json.dumps({"hidden": self.hide_model, "reset_at": self.reset_at}), encoding="utf-8")
+        MODEL_HIDDEN.unlink(missing_ok=True)
 
     async def set_model_hidden(self, hidden):
-        if hidden == self.hide_model:
-            return
+        changed = hidden != self.hide_model
         self.hide_model = hidden
-        if hidden:
-            DIST_DIR.mkdir(parents=True, exist_ok=True)
-            MODEL_HIDDEN.touch()
-        else:
-            MODEL_HIDDEN.unlink(missing_ok=True)
-        if self.client is not None:
+        self.save_demo()
+        if changed and self.client is not None:
             try:
                 await self.command(CMD_MODEL_SHOW, "0" if hidden else "1")
             except Exception as e:
                 log("couldn't update the badge's model line:", describe(e))
+
+    async def reset_demo(self):
+        """Back to before any training: hide the model and start counting guided runs again."""
+        self.reset_at = datetime.now().isoformat(timespec="seconds")
+        self.guided = None
+        self.kept = None
+        await self.set_model_hidden(True)
+        log("demo reset")
 
     async def train_and_deploy(self, force=False):
         """Train, then deploy only if the new model scores at least as well on
@@ -287,6 +337,7 @@ class Recorder:
             "test": test or None,
             "previous": None if demo else baseline,
             "windows": report["windows_per_label"],
+            "unlocked": sorted(self.guided_done()),
         }, indent=2), encoding="utf-8")
         self.kept = None
         await self.set_model_hidden(False)
@@ -432,6 +483,7 @@ class Recorder:
         }
         (folder / (stem + ".json")).write_text(json.dumps(meta, indent=2))
         self.seconds = None
+        self.guided = None
         return str((folder / (stem + ".csv")).relative_to(ROOT))
 
     def badge_prompt(self):
@@ -582,8 +634,8 @@ class Recorder:
             self.pending = None
         elif op == "train_deploy":
             await self.train_and_deploy(bool(msg.get("force")))
-        elif op == "hide_model":
-            await self.set_model_hidden(bool(msg.get("hidden")))
+        elif op == "reset_demo":
+            await self.reset_demo()
         await self.broadcast_status()
 
 
@@ -624,6 +676,7 @@ async def main():
     app["rec"] = rec
     app.router.add_get("/", index)
     app.router.add_get("/ws", ws_handler)
+    app.router.add_static("/sounds", SOUNDS_DIR)
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, "127.0.0.1", args.port).start()
