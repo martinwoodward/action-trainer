@@ -5,3 +5,4 @@ data/
 dist/
 .impeccable/
 leaderboard_state.*
+race/wifi.json

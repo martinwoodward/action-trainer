@@ -44,6 +44,41 @@ badge apps live in [`badger/home`](https://github.com/badger/home).
   imports beyond `math`.
 - Use `python -m unittest discover -s tests` for tests.
 
+## Flashing a badge
+
+When the user asks to flash, install or deploy "the badge" (or similar):
+
+1. **Ask which app**, using the ask_user tool: **Airtime** or **Race**. Don't
+   guess, even if the badge currently runs one of them.
+2. **Airtime:** follow the `badge-deploy` skill (ask about autostart, then
+   `python tools/deploy_badge.py --autostart|--no-autostart`).
+3. **Race:** before touching the badge, check for `race/wifi.json`
+   (gitignored).
+   - If it is missing, copy `race/wifi.example.json` to `race/wifi.json` and
+     open it in the OS default editor (macOS `open race/wifi.json`, Windows
+     `Start-Process race\wifi.json`, Linux `xdg-open race/wifi.json`). Ask the
+     user to fill in `ssid`, `password` and `server` (an IP, `auto` for this
+     computer, or `none` to broadcast). Wait until they confirm before
+     flashing.
+   - If it exists but still has the example values (`MyNetwork` or
+     `change-me`), open it the same way and ask the user to finish it.
+   - Never print, log or commit the password.
+   - Then, from `race/`, run `python tools/deploy_race.py kiosk`. Race boots
+     straight into the app, with no boot animation and no menu. It removes
+     Airtime from the badge; `python tools/deploy_race.py restore` puts the
+     stock boot back.
+4. **Always restart the badge after installing**, then check it came back.
+   `deploy_race.py` already ends with `mpremote reset`. For Airtime, run
+   `python -m mpremote connect <port> reset` yourself. After a reset, the USB
+   port can disappear for a few seconds and may come back with a different
+   name; rerun `python -m mpremote devs` before the next command. A serial
+   reset is a watchdog reset: it skips the boot animation and Airtime's
+   autostart and opens the menu (the Race kiosk ignores this and always
+   starts Race). So after an Airtime `--autostart` install, tell the user that
+   autostart applies from the next power-on, reset-button press or wake.
+   Don't put the badge to sleep (`powman.goto_dormant_*`) to restart it; it
+   may not come back on USB until the reset button is pressed.
+
 ## Connecting to a badge (Windows)
 
 - `mpremote` and `pip` may not be on PATH; use `python -m mpremote` and
@@ -70,8 +105,9 @@ badge apps live in [`badger/home`](https://github.com/badger/home).
 - Each app needs `badge/apps/<name>/__init__.py` and a 24×24 `icon.png`.
 - Airtime must call `badge.mode(LORES | VSYNC)` at start: the boot animation
   leaves the display in HIRES when the app autostarts.
-- **Deploy Airtime:** `python tools/deploy_badge.py`, then press the badge's
-  reset button. **Whenever you install it, ask the user whether it should
+- **Deploy Airtime:** `python tools/deploy_badge.py`, then restart the badge
+  yourself with `python -m mpremote connect <port> reset` (don't ask the user
+  to press reset). **Whenever you install it, ask the user whether it should
   autostart**, and pass `--autostart` or `--no-autostart`. Autostart must keep
   the boot animation, the reset button, HOME (back to the menu) and sleep
   working.

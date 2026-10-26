@@ -158,15 +158,17 @@ python tools/deploy_race.py app      # update the app/model in /state only
 python tools/deploy_race.py restore  # stock boot (badge/main.orig.py)
 ```
 
-`app` and `kiosk` also take the Wi-Fi settings, which are stored on the badge
-in `/state/airtime_net.json`:
+`app` and `kiosk` also send the Wi-Fi settings, which are stored on the badge
+in `/state/airtime_net.json`. Put them in `wifi.json` (gitignored), copied
+from `wifi.example.json`:
 
-```powershell
-$env:AIRTIME_WIFI_SSID = "..."; $env:AIRTIME_WIFI_PASSWORD = "..."
-python tools/deploy_race.py kiosk --server auto
+```json
+{ "ssid": "MyNetwork", "password": "...", "server": "auto" }
 ```
 
-`--wifi-ssid` and `--wifi-password` work too but land in your shell history.
+`AIRTIME_WIFI_SSID`/`AIRTIME_WIFI_PASSWORD` and `--server` override the
+file. `--wifi-ssid` and `--wifi-password` work too but land in your shell
+history.
 `--server auto` uses this computer's current IP; `--server none` makes the
 badge broadcast until the leaderboard answers. Without stored credentials, the
 badge uses `WIFI_SSID` and `WIFI_PASSWORD` from `/system/secrets.py`. The tool

@@ -48,8 +48,9 @@ into Race). Deploy both with `tools/deploy_race.py` (`kiosk`, `app` or
 - The race app in this repo has **no BLE**: it talks Wi-Fi/UDP only, so
   `race_rec.py` and `listen.py` need a BLE build for recording. Its Wi-Fi
   settings live in `/state/airtime_net.json` (`ssid`, `password`, `server`),
-  written by `tools/deploy_race.py --wifi-ssid/--wifi-password/--server`
-  (or `AIRTIME_WIFI_*` env vars); it falls back to `WIFI_*` in
+  written by `tools/deploy_race.py` from the gitignored `wifi.json` (see
+  `wifi.example.json`), overridden by `--wifi-ssid/--wifi-password/--server`
+  or `AIRTIME_WIFI_*` env vars; it falls back to `WIFI_*` in
   `/system/secrets.py`. Never commit Wi-Fi credentials.
 - The race screen mirrors the badge's leaderboard card. Colours come from
   `PALETTE` in `protocol.py` (GitHub brand colours): the leaderboard gives each

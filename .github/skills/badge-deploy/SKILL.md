@@ -1,12 +1,17 @@
 ---
 name: badge-deploy
-description: Install, test and debug the Airtime badge app (badge/apps/airtime) on a GitHub Universe badge over USB serial, including autostart, naming, model install and checking it over BLE. Use whenever the user asks to deploy, install, flash, test or debug the app on the badge.
+description: Install, test and debug the Airtime badge app (badge/apps/airtime) on a GitHub Universe badge over USB serial, including autostart, naming, model install and checking it over BLE. Use whenever the user asks to deploy, install, flash, test or debug the app on the badge; it first asks whether to flash Airtime or Race.
 ---
 
 # Deploy Airtime to a badge
 
 Read `docs/badge/USB_SERIAL.md` first if you haven't. Paths below are relative
 to the repository root.
+
+**First, ask the user whether they want Airtime or Race** (use the ask_user
+tool). For Race, follow "Flashing a badge" in
+`.github/copilot-instructions.md` (it checks for `race/wifi.json` and uses
+`race/tools/deploy_race.py kiosk`) instead of the steps below.
 
 ## 1. Find the badge
 
@@ -45,9 +50,18 @@ sleeps.
 
 ## 3. Start it
 
-Ask the user to **press the badge's reset button**. Don't use
-`mpremote reset` to test autostart: it is a watchdog reset, which (like
-leaving the app) deliberately boots into the menu.
+Restart the badge yourself straight after installing:
+
+```powershell
+python -m mpremote connect <port> reset
+```
+
+Then wait for the port to come back (rerun `python -m mpremote devs`; the name
+can change). This is a watchdog reset, which (like leaving the app)
+deliberately boots into the menu and skips autostart. After an `--autostart`
+install, tell the user that autostart applies from the next power-on,
+reset-button press or wake. Don't use `powman.goto_dormant_*` to restart; the
+badge may not come back on USB until the reset button is pressed.
 
 To watch the app's output instead, use `--run` (Ctrl+C detaches; the app
 keeps running). Errors and `print` output from the app appear there.
