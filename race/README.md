@@ -45,8 +45,8 @@ it records and trains Airtime models using the root `data/` and `dist/`.
 Stop any Race recorder already using port 8765 before launching it.
 Universe Walker's live badge dashboard (`dashboard/server.py`) runs from a
 clone of [martinwoodward/universe-walker](https://github.com/martinwoodward/universe-walker)
-(`main`) next to this repository, named `martinwoodward_universe-walker` or
-`universe-walker` (or pass `-UniverseWalkerPath`/`$env:UNIVERSE_WALKER_PATH`),
+(`main`) next to this repository, named `universe-walker` or
+`martinwoodward_universe-walker` (or pass `-UniverseWalkerPath`/`$env:UNIVERSE_WALKER_PATH`),
 at `http://127.0.0.1:8767/`; it uses port 8767 because the recorder has 8765.
 For Race-specific recording and training, use the commands below instead.
 

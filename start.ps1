@@ -38,7 +38,7 @@ if (-not $UniverseWalkerPath) {
         $parents += Split-Path (Split-Path $commonDir -Parent) -Parent
     }
     $candidates = foreach ($parent in $parents) {
-        foreach ($name in 'martinwoodward_universe-walker', 'universe-walker') {
+        foreach ($name in 'universe-walker', 'martinwoodward_universe-walker') {
             Join-Path $parent $name
         }
     }
