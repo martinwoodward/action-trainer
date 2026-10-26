@@ -20,11 +20,18 @@ Set up the virtual environment from the repository root (see the root
 cd race
 ```
 
-To start the Race leaderboard alongside the Action Trainer recorder and open
-their pages from the repository root:
+To start the Race leaderboard, the Action Trainer recorder and the Universe
+Walker preview server, and open their pages, run from the repository root:
 
 ```powershell
-.\start-race.ps1
+.\start.ps1
+```
+
+To add an **Action Trainer** shortcut to the desktop and Start menu that runs
+this launcher:
+
+```powershell
+.\start.ps1 -CreateShortcut
 ```
 
 The launcher creates the root `.venv` if needed (Python 3.11 or newer must
@@ -36,6 +43,11 @@ and Action Trainer is at `http://localhost:8765`, with guided recording and
 BLE Train & deploy. This is the root `recorder.py`, not `race_rec.py`;
 it records and trains Airtime models using the root `data/` and `dist/`.
 Stop any Race recorder already using port 8765 before launching it.
+Universe Walker's live badge dashboard (`dashboard/server.py`) runs from a
+`universe-walker` or `martinwoodward_universe-walker` clone next to this
+repository that has the dashboard (or `-UniverseWalkerPath`/
+`$env:UNIVERSE_WALKER_PATH`) at `http://127.0.0.1:8767/`; it uses port 8767
+because the recorder has 8765.
 For Race-specific recording and training, use the commands below instead.
 
 ## Record
