@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800">
+  <defs>
+    <radialGradient id="berry" cx="0.35" cy="0.3" r="0.8">
+      <stop offset="0" stop-color="#f25a86"/>
+      <stop offset="0.45" stop-color="#c51a4a"/>
+      <stop offset="1" stop-color="#7d0c2c"/>
+    </radialGradient>
+    <linearGradient id="leaf" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b4dc55"/>
+      <stop offset="0.55" stop-color="#75a928"/>
+      <stop offset="1" stop-color="#3f7a1a"/>
+    </linearGradient>
+  </defs>
+  <!-- Leaves: a dotted round-capped stroke gives the serrated black edge. -->
+  <g stroke="#000" stroke-linejoin="round">
+    <path fill="url(#leaf)" stroke-width="22" d="M372 196C362 96 270 24 124 36c-6 110 70 188 176 190 44 1 70-6 72-30z"/>
+    <path fill="none" stroke-width="34" stroke-dasharray="0 20" stroke-linecap="round" d="M372 196C362 96 270 24 124 36c-6 110 70 188 176 190 44 1 70-6 72-30z"/>
+    <path fill="url(#leaf)" stroke-width="22" d="M428 196C438 96 530 24 676 36c6 110-70 188-176 190-44 1-70-6-72-30z"/>
+    <path fill="none" stroke-width="34" stroke-dasharray="0 20" stroke-linecap="round" d="M428 196C438 96 530 24 676 36c6 110-70 188-176 190-44 1-70-6-72-30z"/>
+    <path fill="none" stroke-width="12" stroke-linecap="round" d="M190 74c78 26 136 66 176 118M610 74c-78 26-136 66-176 118"/>
+  </g>
+  <!-- Berry body -->
+  <path fill="#000" d="M400 196c164 0 256 58 268 140 62 42 74 132 32 204-10 104-74 164-170 186-46 70-214 70-260 0-96-22-160-82-170-186-42-72-30-162 32-204 12-82 104-140 268-140z"/>
+  <!-- Drupelets -->
+  <g fill="url(#berry)">
+    <ellipse cx="400" cy="272" rx="82" ry="47"/>
+    <ellipse cx="238" cy="292" rx="84" ry="36" transform="rotate(-38 238 292)"/>
+    <ellipse cx="562" cy="292" rx="84" ry="36" transform="rotate(38 562 292)"/>
+    <ellipse cx="296" cy="420" rx="86" ry="92" transform="rotate(-12 296 420)"/>
+    <ellipse cx="504" cy="420" rx="86" ry="92" transform="rotate(12 504 420)"/>
+    <ellipse cx="148" cy="456" rx="34" ry="76" transform="rotate(8 148 456)"/>
+    <ellipse cx="652" cy="456" rx="34" ry="76" transform="rotate(-8 652 456)"/>
+    <ellipse cx="400" cy="580" rx="90" ry="85"/>
+    <ellipse cx="226" cy="616" rx="64" ry="80" transform="rotate(-32 226 616)"/>
+    <ellipse cx="574" cy="616" rx="64" ry="80" transform="rotate(32 574 616)"/>
+    <ellipse cx="400" cy="724" rx="88" ry="36"/>
+  </g>
+</svg>

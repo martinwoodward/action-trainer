@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="10 170 1000 700">
+  <defs>
+    <linearGradient id="fur" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e3aa7a"/><stop offset="0.55" stop-color="#c58d68"/><stop offset="1" stop-color="#946651"/>
+    </linearGradient>
+    <linearGradient id="mane" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#dba675"/><stop offset="1" stop-color="#b47c56"/>
+    </linearGradient>
+    <linearGradient id="face" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a97c62"/><stop offset="1" stop-color="#7c5847"/>
+    </linearGradient>
+    <linearGradient id="horn" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f7e6cf"/><stop offset="1" stop-color="#a8b3a0"/>
+    </linearGradient>
+    <radialGradient id="nose" cx="0.4" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#d99d8b"/><stop offset="1" stop-color="#b3786a"/>
+    </radialGradient>
+  </defs>
+  <ellipse cx="500" cy="842" rx="400" ry="20" fill="#000" opacity="0.12"/>
+  <g>
+    <rect stroke="#2b2a2e" stroke-width="22" stroke-linejoin="round" paint-order="stroke" x="250" y="560" width="90" height="270" rx="28" fill="#dca274"/>
+    <path d="M250 776h90v26q0 28-28 28h-34q-28 0-28-28z" fill="#1f3836"/>
+    <path d="M295 784v46" stroke="#2b2a2e" stroke-width="6"/>
+    <path d="M264 818q0-18 12-28M308 818q0-18 12-28" stroke="#9fb3a8" stroke-width="5" fill="none" stroke-linecap="round"/>
+    <rect x="250" y="560" width="90" height="270" rx="28" fill="#000" opacity="0.18"/>
+  </g>
+  <g>
+    <rect stroke="#2b2a2e" stroke-width="22" stroke-linejoin="round" paint-order="stroke" x="640" y="600" width="90" height="230" rx="28" fill="#dca274"/>
+    <path d="M640 776h90v26q0 28-28 28h-34q-28 0-28-28z" fill="#1f3836"/>
+    <path d="M685 784v46" stroke="#2b2a2e" stroke-width="6"/>
+    <path d="M654 818q0-18 12-28M698 818q0-18 12-28" stroke="#9fb3a8" stroke-width="5" fill="none" stroke-linecap="round"/>
+    <rect x="640" y="600" width="90" height="230" rx="28" fill="#000" opacity="0.18"/>
+  </g>
+  <path stroke="#2b2a2e" stroke-width="22" stroke-linejoin="round" paint-order="stroke" fill="#7a4f42" d="M140 430c-40 10-70 60-80 120-6 30-16 46-6 58 22-8 40-26 52-54 8 28 28 22 30-8 2-40 12-80 34-100z"/>
+  <path stroke="#2b2a2e" stroke-width="22" stroke-linejoin="round" paint-order="stroke" fill="url(#fur)" d="M724,470 L746,491 L721,509 L731,531 L701,545 L707,569 L675,580 L673,604 L635,609 L625,631 L590,634 L575,658 L537,651 L513,668 L480,664 L452,682 L420,667 L389,676 L360,663 L324,674 L303,652 L269,653 L251,633 L211,634 L203,610 L170,602 L167,579 L132,569 L136,546 L108,531 L122,508 L98,490 L113,470 L93,449 L122,432 L112,410 L137,394 L129,370 L167,361 L172,339 L204,331 L210,305 L250,306 L269,288 L303,288 L324,266 L360,276 L388,263 L420,274 L452,259 L480,276 L514,270 L536,289 L573,285 L591,305 L627,307 L635,331 L670,338 L675,360 L710,370 L701,395 L727,410 L720,431 L749,449z"/>
+  <path fill="none" stroke="#a46c4a" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity="0.75" d="M170 540l18 20 16-18 18 20 16-18 18 20 16-18 18 20 16-18 18 20 16-18 18 20 16-18M220 450l16 16 14-14 16 16 14-14 16 16M280 340c10 8 10 18 4 24M360 320c8 10 6 20 0 26"/>
+  <g>
+    <rect stroke="#2b2a2e" stroke-width="22" stroke-linejoin="round" paint-order="stroke" x="130" y="580" width="90" height="250" rx="28" fill="#dca274"/>
+    <path d="M130 776h90v26q0 28-28 28h-34q-28 0-28-28z" fill="#1f3836"/>
+    <path d="M175 784v46" stroke="#2b2a2e" stroke-width="6"/>
+    <path d="M144 818q0-18 12-28M188 818q0-18 12-28" stroke="#9fb3a8" stroke-width="5" fill="none" stroke-linecap="round"/>
+    
+  </g>
+  <g>
+    <rect stroke="#2b2a2e" stroke-width="22" stroke-linejoin="round" paint-order="stroke" x="520" y="620" width="90" height="210" rx="28" fill="#dca274"/>
+    <path d="M520 776h90v26q0 28-28 28h-34q-28 0-28-28z" fill="#1f3836"/>
+    <path d="M565 784v46" stroke="#2b2a2e" stroke-width="6"/>
+    <path d="M534 818q0-18 12-28M578 818q0-18 12-28" stroke="#9fb3a8" stroke-width="5" fill="none" stroke-linecap="round"/>
+    
+  </g>
+  <path stroke="#2b2a2e" stroke-width="22" stroke-linejoin="round" paint-order="stroke" fill="url(#horn)" d="M525 445c-85 0-125-75-100-175 12 64 52 102 112 112z"/>
+  <path stroke="#2b2a2e" stroke-width="22" stroke-linejoin="round" paint-order="stroke" fill="url(#horn)" d="M875 445c85 0 125-75 100-175-12 64-52 102-112 112z"/>
+  <path stroke="#2b2a2e" stroke-width="22" stroke-linejoin="round" paint-order="stroke" fill="#8a5f4c" d="M555 500c-44-14-68-2-80 20 22 12 54 12 80 0z"/>
+  <path stroke="#2b2a2e" stroke-width="22" stroke-linejoin="round" paint-order="stroke" fill="#8a5f4c" d="M865 500c44-14 68-2 80 20-22 12-54 12-80 0z"/>
+  <path stroke="#2b2a2e" stroke-width="22" stroke-linejoin="round" paint-order="stroke" fill="url(#face)" d="M887,580 L895,605 L880,627 L887,656 L860,670 L853,696 L827,706 L817,734 L787,733 L767,751 L739,744 L715,761 L690,746 L663,753 L644,731 L615,731 L602,707 L574,699 L571,670 L549,654 L549,627 L528,606 L544,580 L535,555 L550,533 L543,504 L570,490 L578,464 L603,454 L613,426 L643,428 L664,410 L691,416 L715,398 L740,414 L767,408 L786,429 L815,428 L828,453 L856,462 L859,490 L882,506 L881,533 L901,554z"/>
+  <path stroke="#2b2a2e" stroke-width="22" stroke-linejoin="round" paint-order="stroke" fill="url(#mane)" d="M900,365 L914,384 L897,401 L907,424 L879,435 L878,457 L855,466 L852,491 L820,491 L806,509 L780,509 L764,531 L735,520 L712,531 L688,521 L662,534 L642,516 L615,519 L600,500 L570,502 L561,480 L534,474 L533,451 L507,441 L510,419 L486,404 L501,383 L486,365 L499,347 L485,325 L511,311 L510,290 L532,279 L530,254 L562,251 L573,232 L600,229 L612,207 L642,214 L663,200 L688,209 L713,194 L735,209 L762,203 L779,222 L809,218 L821,238 L850,241 L853,265 L880,273 L881,294 L907,306 L895,329 L912,346z"/>
+  <path fill="none" stroke="#a46c4a" stroke-width="6" stroke-linecap="round" d="M630 310c6-10 14-10 18 0M690 300c6-10 14-10 18 0M750 310c6-10 14-10 18 0M610 410l6 14M790 400l6 14M670 430l4 14"/>
+  <path fill="#fff" opacity="0.25" d="M570 330c40-60 140-90 240-60-90 0-170 20-240 60z"/>
+  <circle cx="630" cy="575" r="28" fill="#141414"/>
+  <circle cx="840" cy="578" r="26" fill="#141414"/>
+  <circle cx="638" cy="565" r="8" fill="#fff"/>
+  <circle cx="847" cy="568" r="8" fill="#fff"/>
+  <rect stroke="#2b2a2e" stroke-width="22" stroke-linejoin="round" paint-order="stroke" x="705" y="630" width="160" height="112" rx="50" fill="url(#nose)"/>
+  <path fill="#2b2a2e" d="M730 676c10-12 26-12 34 4-14 2-26 0-34-4zM840 676c-10-12-26-12-34 4 14 2 26 0 34-4z"/>
+  <path fill="#fff" opacity="0.3" d="M725 655c20-18 76-22 112-8-38-4-84 0-112 8z"/>
+</svg>
