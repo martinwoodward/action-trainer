@@ -179,17 +179,23 @@ UDP status datagram to port 47217 every 250 ms, and at once when its state
 changes. It shows each badge's **air time** (time in the `throw` state) since it was reset,
 and a **total air time** bar chart with one horizontal bar per badge, in the
 badge's colour, with its name on the left and its air time since reset at the
-right-hand end. Bars are sorted from most to least air time, top down; when a
+right-hand end. A badge joins the chart once it has air time since the last reset, so
+Reset all clears the chart. Bars are sorted from most to least air time, top down; when a
 badge overtakes another, the bars slide past each other (600 ms). Offline badges stay on the
-chart, faded. A badge named after an animal or a mascot (for example Duckie,
-Squirrel or Copilot) has that picture at the right-hand end of its bar, and
-next to its name on its card.
-Duckie is drawn as a yellow rubber duck; Copilot and Mona use the Copilot and
-Octocat marks from Primer Octicons (MIT); Squirrel is the Twemoji squirrel
-(CC-BY 4.0, [jdecked/twemoji](https://github.com/jdecked/twemoji)); the other
-animals use emoji. Each badge keeps one colour on the page: Copilot blue,
-Duckie orange, Mona purple, Squirrel pink, and for any other badge a colour
-picked from its id.
+chart, faded; a badge not heard for 60 s falls off the bottom of the chart and its card goes,
+and it rises back in if it's heard again. Each badge has its own colour from the GitHub brand palette
+(`PALETTE` in `protocol.py`): the leaderboard gives each new badge the next
+free colour, keeps it in `leaderboard_state.json` and sends it to the badge in
+its acks, so the bar, the card and the badge's own screen match and no two
+badges share a colour. With more badges than colours, colours are reused.
+
+Each badge's picture and sounds come from `web/plushies/`: a badge whose name
+contains a folder's name (for example Duckie → `duck/`, Copilot 2 →
+`copilot/`) uses that folder's `icon`, `throw` and `drop` files, and
+`default/` fills in anything missing. The picture sits at the right-hand end
+of its bar and next to its name on its card. See
+[`web/plushies/README.md`](web/plushies/README.md) for the conventions, the
+recommended audio format and the credits.
 
 The badge's own screen matches its card: a white card with the same colour
 swatch, picture (24×24 PNGs in `badge/apps/race/assets/`, copied by
@@ -198,23 +204,22 @@ badge's colour while it flies, **DROPPED** in red, its battery level at the
 top right (`badge.battery_level()`, read every 2 s; red at 20% or below;
 while charging the percentage is hidden and the icon fills up on a loop), and its throw/drop counts and Wi-Fi address at the bottom.
 Names too long to fit are shortened with `..`. Find blinks the screen in the badge's colour.
-Badges named after other animals show no picture on the badge. Keep `PALETTE`
-and the namesake colours in step in `web/leaderboard.html` and the app.
-Turn on **Sound** in the header and the leaderboard's computer plays a sound of
-delight for as long as a plushie is in the air: a rubber-duck squeak for Duckie, a
-chitter for Squirrel, a sparkly arpeggio for Copilot, bubble bloops for Mona,
-and a "wheee" for anyone else. Each sound repeats until its plushie lands, and
-plushies in the air together are heard together. A flight too short to be
-reported still plays its sound once. When a badge reports a drop (its drop
-counter goes up), the page plays one short "UGF!" (a thud, a grunt and a
-breath), pitched a little differently per plushie; it plays once per drop,
-however long the badge shows DROPPED. Click a badge's picture on its card to
-hear its sound, or Shift-click it to hear its UGF. The sounds are synthesised in the page with Web Audio; browsers only
-allow sound after a click on the page.
+Badges named after other animals show no picture on the badge.
+Turn on sound with the speaker button in the header (it starts muted on every
+load) and the leaderboard's computer plays a plushie's `throw` sound once each time it
+leaves the ground: a rubber-duck squeak for Duckie, a chitter for
+Squirrel, a sparkly arpeggio for Copilot, bubble bloops for Mona, and a
+"wheee" for anyone else. Plushies in the air together are heard together. A
+flight too short to be reported still plays its sound once. When a badge
+reports a drop (its drop counter goes up), the page plays its `drop` sound
+once, by default a short "UGF!". Badges sharing a default sound are pitched a
+little apart. Click a badge's picture on its card to hear its throw sound, or
+Shift-click it to hear its drop. Browsers only allow sound after a click on
+the page.
 
 The page uses the light theme of [badger.github.io](https://badger.github.io/)
-(colours, fonts and card styles from its `src/styles/globals.css`). To add more, edit
-`NAMESAKES` in `web/leaderboard.html`. The server saves the known badges and
+(colours, fonts and card styles from its `src/styles/globals.css`). To add more
+plushies, add folders to `web/plushies/`. The server saves the known badges and
 the page-reset baselines to `leaderboard_state.json`, so neither a page reload
 nor a server restart empties the chart:
 
@@ -243,7 +248,7 @@ python leaderboard.py              # http://localhost:8766
   **Reset** on the page (per badge or **Reset all**) records the badge's latest
   totals as an offset in `leaderboard_state.json`, and the times shown are the
   lifetime totals minus that offset. Offsets survive badge reboots and
-  leaderboard restarts. Each ack tells the badge its air-time offset, so the
+  leaderboard restarts. Each ack tells the badge its air-time offset (and its colour), so the
   badge screen shows air time since the last reset with its lifetime total
   below. Its footer shows the throw and drop counts, the badge's IP (`Me`), and the
   leaderboard's IP (`Srv`, or `Srv broadcast` while it searches) with the
