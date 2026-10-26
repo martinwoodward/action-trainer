@@ -110,11 +110,21 @@ and empty windows are mapped to `still`. Call it once per hop: it only reports
 `walk` after `WALK_CONFIRM` (2) back-to-back walk windows, which keeps waving
 and handling the badge from being counted as steps.
 
-In the recorder, **Train & deploy** trains, scores the new model and the one
-already on the badge against the same test recordings, and only sends the new
-one if it scores at least as well. Otherwise it keeps the current model and
-offers **Deploy anyway**. The deployed model and its scorecard are kept in
+In the recorder, **Train & deploy** trains and always sends the new model to
+the badge. It also scores the new model and the one it replaces against the
+same test recordings and shows the change. The deployed model and its scorecard are kept in
 `dist/deployed_model.py` and `dist/deployed.json`.
+
+For demos, the live chart starts without the walk, flying, throw and drop
+colours, and the recorder plays no sounds. After a guided **Walk** run and
+**Train & deploy**, walk shows on the chart. After guided **Throw** and
+**Drop** runs and another deploy, flying, throw and drop show too. The page
+then plays the race leaderboard's squirrel sounds (`web/sounds/`), a throw
+sound when the badge leaves the ground and a drop sound when it reports a drop.
+**Reset demo** in Settings goes back to the start. It hides the model here and
+on the badge and turns the colours and sounds off. Only guided runs after the
+reset count again; recordings are kept. The reset state is saved in
+`dist/demo.json`.
 
 To ship a model with another app, copy the reviewed `model.py` into that app
 in `badger/home` and use its deployment workflow.

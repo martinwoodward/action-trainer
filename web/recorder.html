@@ -124,8 +124,6 @@
   .bar span:nth-child(2) { font:600 13px var(--mono); font-variant-numeric:tabular-nums; }
   .bar .track { grid-column:1 / -1; height:6px; border-radius:3px; background:var(--inset); border:1px solid var(--line); overflow:hidden; }
   .bar .track i { display:block; height:100%; border-radius:3px; }
-  #kept { background:var(--danger-bg); border-radius:calc(var(--radius) - 2px); padding:10px 12px; font-size:13px; margin-bottom:12px; }
-  #kept button { margin-top:8px; }
   .wide { width:100%; padding:11px 14px; }
   .promptrow { display:flex; gap:16px; align-items:flex-start; justify-content:space-between; }
   #guides { display:grid; grid-template-columns:repeat(3, 1fr); gap:12px; margin-top:20px; }
@@ -162,8 +160,9 @@
 <div id="settingspop" class="pop" hidden><h2>Settings</h2>
   <label for="voice">Voice</label>
   <div class="setrow"><select id="voice"></select><button id="voicetest">Test</button></div>
-  <label class="check"><input type="checkbox" id="hidemodel"> Hide the model (demo)</label>
-  <p class="hint">Shows "no model" here and on the badge until the next Train &amp; deploy. The model stays on the badge.</p>
+  <button id="resetdemo" class="danger wide">Reset demo</button>
+  <p class="hint">Back to before any training: hides the model here and on the badge, and turns off the chart colours and squirrel sounds. Walk colours come back after a guided walk run and Train &amp; deploy; throw and drop colours and the sounds after guided throw and drop runs and Train &amp; deploy. Recordings are kept.</p>
+  <p class="sub" id="unlockstate"></p>
 </div>
 <div id="renamepop" class="pop" hidden><input id="newname" type="text" maxlength="16" placeholder="Badge name"><button id="rename" class="primary">Save</button></div>
 <main>
@@ -199,7 +198,6 @@
     <section>
       <h2>Model on badge</h2>
       <div id="score"></div>
-      <div id="kept" hidden></div>
       <button id="traindeploy" class="primary wide" disabled>Train &amp; deploy</button>
       <div id="modelstatus" class="sub" style="margin-top:8px;text-align:center"></div>
     </section>
@@ -225,6 +223,16 @@ document.getElementById("theme").onclick = () => {
 matchMedia("(prefers-color-scheme: light)").addEventListener("change", e => { if (!localStorage.getItem("theme")) setTheme(e.matches); });
 const STATE_COLOURS = ["#58a6ff", "#5fed83", "#f2cc60", "#f0883e", "#e9465a", "#4a524c"];
 const STATE_NAMES = ["Still", "Walk", "Flying", "Throw", "Drop", "Handling"];
+// Chart colours (and squirrel sounds) for trained activities unlock once a model trained
+// after those guided runs is deployed: walk on its own, then flying/throw/drop together.
+let stateShown = [true, false, false, false, false, true], soundsOn = false, legendKey = "";
+function renderLegend() {
+  const key = stateShown.join();
+  if (key === legendKey) return;
+  legendKey = key;
+  $("legend").innerHTML = STATE_NAMES.map((n, i) => stateShown[i] ? `<span><i style="background:${STATE_COLOURS[i]}"></i>${n}</span>` : "").join("") +
+    `<span>line = |a| (g)</span>`;
+}
 const WINDOW_MS = 10000;
 
 let ws, status = null, samples = [];
@@ -255,7 +263,7 @@ document.addEventListener("mousedown", e => {
 $("logbtn").onclick = () => { togglePop($("logpop")); $("logbtn").classList.remove("alert"); };
 $("settingsbtn").onclick = () => togglePop($("settingspop"));
 
-$("legend").innerHTML = STATE_NAMES.map((n, i) => `<span><i style="background:${STATE_COLOURS[i]}"></i>${n}</span>`).join("") + `<span>line = |a| (g)</span>`;
+renderLegend();
 
 const dur = s => s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`;
 
@@ -351,7 +359,16 @@ function delta(now, before) {
 }
 function renderModel() {
   const m = status.model || {}, card = m.hidden ? null : m.deployed, test = card && card.test;
-  $("hidemodel").checked = !!m.hidden;
+  const unlocked = m.unlocked || [], walk = unlocked.includes("walk");
+  const throwDrop = unlocked.includes("throw") && unlocked.includes("drop");
+  stateShown = [true, walk, throwDrop, throwDrop, throwDrop, true];
+  if (throwDrop && !soundsOn) loadSounds();
+  soundsOn = throwDrop;
+  renderLegend();
+  const parts = [walk && "walk colours", throwDrop && "throw and drop colours, squirrel sounds"].filter(Boolean);
+  const runs = m.guided || [];
+  $("unlockstate").textContent = (parts.length ? `On: ${parts.join("; ")}.` : "Colours and sounds are off.") +
+    (runs.length ? ` Guided runs since reset: ${runs.join(", ")}.` : " No guided runs since reset.");
   if (!test) {
     $("score").innerHTML = `<p class="hint">${card ? "Deployed. Record a few more runs and I'll hold some back to score it."
       : "Record a few runs, then train. I'll score it on recordings it never saw."}</p>`;
@@ -363,22 +380,20 @@ function renderModel() {
         `<div class="bar"><span>${name} ${delta(test.recall[k], prev && prev.recall[k])}</span><span>${pct(test.recall[k])}</span>` +
         `<div class="track"><i style="width:${pct(test.recall[k])};background:${colour}"></i></div></div>`).join("") + `</div>`;
   }
-  const kept = !m.hidden && m.kept;
-  $("kept").hidden = !kept;
-  if (kept) $("kept").innerHTML = `New model scored ${pct(kept.test.accuracy)}, below the ${pct(kept.current.accuracy)} on your badge, so I kept the current one.` +
-    `<br><button class="small" id="force">Deploy anyway</button>`;
 }
-$("kept").onclick = e => { if (e.target.id === "force") trainDeploy(true); };
-$("hidemodel").onchange = () => {
-  status.model = {...(status.model || {}), hidden: $("hidemodel").checked};
+$("resetdemo").onclick = () => {
+  lastSaved = "";
   $("modelstatus").textContent = "";
-  renderModel();
-  send({op: "hide_model", hidden: $("hidemodel").checked});
+  status.model = {...(status.model || {}), hidden: true, unlocked: [], guided: []};
+  $("settingspop").hidden = true;
+  render();
+  send({op: "reset_demo"});
+  log("demo reset");
 };
-function trainDeploy(force) {
+function trainDeploy() {
   $("traindeploy").disabled = true;
   $("modelstatus").textContent = "Training…";
-  send({op: "train_deploy", force});
+  send({op: "train_deploy"});
 }
 
 function render() {
@@ -447,11 +462,11 @@ const GUIDES = {
     stop(),
     ["still", "Stand still", "Don't move.", 4, "STILL"],
   ],
-  throw: [ready("Hold it, ready to throw."), ...Array.from({length: 5}, () => [
+  throw: [ready("Hold it, ready to throw."), ...Array.from({length: 3}, () => [
     ["throw", "Throw it", "Toss it up and catch it.", 3, "THROW"],
     ["unknown", "Hold it", "Hold it in your hand.", 3, "HOLD"],
   ]).flat(), ["still", "Set it down", "Leave it still.", 4, "STILL"]],
-  drop: [ready("Hold it out over something soft."), ...Array.from({length: 5}, () => [
+  drop: [ready("Hold it out over something soft."), ...Array.from({length: 3}, () => [
     ["drop", "Drop it", "Let it fall onto something soft.", 3, "DROP"],
     ["unknown", "Pick it up", "Pick it up and hold it out again.", 4, "PICKUP"],
   ]).flat(), ["still", "Leave it still", "Don't touch it.", 4, "STILL"]],
@@ -464,11 +479,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const robot = text => ({text, pitch: 0.4, rate: 0.85});
 const QUIPS = {
   WALK: [
-    [robot("Walking detected. Recording in progress.")],
-    [robot("Performing gait analysis."), "Is that your walk? Really? Wow."],
-    ["That's the walk of someone who just merged to main on a Friday."],
+    [robot("Walking detected.")],
+    [robot("Performing gait analysis."), "Is that your walk? Wow."],
+    ["Now that's the walk of someone who just merged to main on a Friday."],
   ],
-  FIDGET: [[robot("Movement logged. Please continue.")]],
+  FIDGET: [[robot("That tickles you naughty boy")]],
   SWAY: [["Big keynote energy."]],
 };
 // Speak one or more parts in sequence; a part is text or {text, pitch, rate}.
@@ -514,6 +529,35 @@ function chime() {
     osc.connect(gain).connect(audio.destination);
     osc.start(t + at); osc.stop(t + at + 0.25);
   });
+}
+// The race leaderboard's squirrel sounds (web/sounds/): throw when the badge leaves the
+// ground, drop when it reports a drop. Fetched and decoded once, when they unlock.
+const SQUIRREL = {throw: "/sounds/throw.wav", drop: "/sounds/drop.wav"};
+const FLYING = 2, DROP = 4, THROW_GAP_MS = 1000;  // a bounce doesn't replay the throw
+const squirrelBufs = {};
+let lastState = null, lastThrowAt = -Infinity;
+function loadSounds() {
+  audio ||= new (window.AudioContext || window.webkitAudioContext)();
+  for (const [kind, url] of Object.entries(SQUIRREL)) {
+    squirrelBufs[kind] ||= fetch(url).then(r => r.arrayBuffer()).then(b => audio.decodeAudioData(b))
+      .catch(() => { delete squirrelBufs[kind]; return null; });
+  }
+}
+async function squirrel(state) {
+  const kind = state === FLYING ? "throw" : state === DROP ? "drop" : null;
+  if (!kind) return;
+  if (kind === "throw") {
+    if (performance.now() - lastThrowAt < THROW_GAP_MS) return;
+    lastThrowAt = performance.now();
+  }
+  loadSounds();
+  const buf = await squirrelBufs[kind];
+  if (!buf || !soundsOn) return;
+  audio.resume();
+  const src = audio.createBufferSource(), gain = audio.createGain();
+  src.buffer = buf; gain.gain.value = 0.5;
+  src.connect(gain).connect(audio.destination);
+  src.start();
 }
 let guide = null, lastSaved = "";
 const GUIDE_TILES = [["walk", "Walk", "Steps vs. just moving it"], ["throw", "Throw", "Toss it up and catch it"],
@@ -583,7 +627,7 @@ document.addEventListener("keydown", e => {
 });
 $("save").onclick = () => send({op: "save", segments: segs.map(s => ({start_ms: Math.round(s.start), end_ms: Math.round(s.end), label: s.label}))});
 $("discard").onclick = () => { send({op: "discard"}); log("discarded"); };
-$("traindeploy").onclick = () => trainDeploy(false);
+$("traindeploy").onclick = () => trainDeploy();
 
 function draw() {
   const c = $("plot"), dpr = window.devicePixelRatio || 1;
@@ -598,6 +642,7 @@ function draw() {
     g.globalAlpha = theme.band;
     for (let i = 0; i < samples.length - 1; i++) {
       const [t, , s] = samples[i];
+      if (!stateShown[s] && s != null && s < STATE_COLOURS.length) continue;
       g.fillStyle = STATE_COLOURS[s] || "#333";
       g.fillRect(x(t), 0, Math.max(1, x(samples[i + 1][0]) - x(t)) + 0.5, h);
     }
@@ -701,6 +746,9 @@ function connect() {
       if (was && !m.connected) log("badge disconnected", "err");
       if (!was && m.connected) log("connected: " + m.info);
     } else if (m.type === "samples") {
+      for (const [, , s] of m.data) {
+        if (s !== lastState) { lastState = s; if (soundsOn) squirrel(s); }
+      }
       samples.push(...m.data);
       const cut = samples[samples.length - 1][0] - WINDOW_MS - 500;
       while (samples.length && samples[0][0] < cut) samples.shift();
@@ -722,7 +770,7 @@ function connect() {
     } else if (m.type === "trained") {
       status.model = m.model;
       $("modelstatus").textContent = m.deployed ? "Deployed just now" : "";
-      log(m.deployed ? `model ${m.deployed} deployed` : "new model scored lower, kept the current one");
+      log(`model ${m.deployed} deployed`);
       render();
     } else if (m.type === "error") {
       log(m.message, "err");
