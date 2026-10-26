@@ -124,8 +124,6 @@
   .bar span:nth-child(2) { font:600 13px var(--mono); font-variant-numeric:tabular-nums; }
   .bar .track { grid-column:1 / -1; height:6px; border-radius:3px; background:var(--inset); border:1px solid var(--line); overflow:hidden; }
   .bar .track i { display:block; height:100%; border-radius:3px; }
-  #kept { background:var(--danger-bg); border-radius:calc(var(--radius) - 2px); padding:10px 12px; font-size:13px; margin-bottom:12px; }
-  #kept button { margin-top:8px; }
   .wide { width:100%; padding:11px 14px; }
   .promptrow { display:flex; gap:16px; align-items:flex-start; justify-content:space-between; }
   #guides { display:grid; grid-template-columns:repeat(3, 1fr); gap:12px; margin-top:20px; }
@@ -200,7 +198,6 @@
     <section>
       <h2>Model on badge</h2>
       <div id="score"></div>
-      <div id="kept" hidden></div>
       <button id="traindeploy" class="primary wide" disabled>Train &amp; deploy</button>
       <div id="modelstatus" class="sub" style="margin-top:8px;text-align:center"></div>
     </section>
@@ -383,25 +380,20 @@ function renderModel() {
         `<div class="bar"><span>${name} ${delta(test.recall[k], prev && prev.recall[k])}</span><span>${pct(test.recall[k])}</span>` +
         `<div class="track"><i style="width:${pct(test.recall[k])};background:${colour}"></i></div></div>`).join("") + `</div>`;
   }
-  const kept = !m.hidden && m.kept;
-  $("kept").hidden = !kept;
-  if (kept) $("kept").innerHTML = `New model scored ${pct(kept.test.accuracy)}, below the ${pct(kept.current.accuracy)} on your badge, so I kept the current one.` +
-    `<br><button class="small" id="force">Deploy anyway</button>`;
 }
-$("kept").onclick = e => { if (e.target.id === "force") trainDeploy(true); };
 $("resetdemo").onclick = () => {
   lastSaved = "";
   $("modelstatus").textContent = "";
-  status.model = {...(status.model || {}), hidden: true, kept: null, unlocked: [], guided: []};
+  status.model = {...(status.model || {}), hidden: true, unlocked: [], guided: []};
   $("settingspop").hidden = true;
   render();
   send({op: "reset_demo"});
   log("demo reset");
 };
-function trainDeploy(force) {
+function trainDeploy() {
   $("traindeploy").disabled = true;
   $("modelstatus").textContent = "Training…";
-  send({op: "train_deploy", force});
+  send({op: "train_deploy"});
 }
 
 function render() {
@@ -635,7 +627,7 @@ document.addEventListener("keydown", e => {
 });
 $("save").onclick = () => send({op: "save", segments: segs.map(s => ({start_ms: Math.round(s.start), end_ms: Math.round(s.end), label: s.label}))});
 $("discard").onclick = () => { send({op: "discard"}); log("discarded"); };
-$("traindeploy").onclick = () => trainDeploy(false);
+$("traindeploy").onclick = () => trainDeploy();
 
 function draw() {
   const c = $("plot"), dpr = window.devicePixelRatio || 1;
@@ -778,7 +770,7 @@ function connect() {
     } else if (m.type === "trained") {
       status.model = m.model;
       $("modelstatus").textContent = m.deployed ? "Deployed just now" : "";
-      log(m.deployed ? `model ${m.deployed} deployed` : "new model scored lower, kept the current one");
+      log(`model ${m.deployed} deployed`);
       render();
     } else if (m.type === "error") {
       log(m.message, "err");

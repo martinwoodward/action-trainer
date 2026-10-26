@@ -110,10 +110,9 @@ and empty windows are mapped to `still`. Call it once per hop: it only reports
 `walk` after `WALK_CONFIRM` (2) back-to-back walk windows, which keeps waving
 and handling the badge from being counted as steps.
 
-In the recorder, **Train & deploy** trains, scores the new model and the one
-already on the badge against the same test recordings, and only sends the new
-one if it scores at least as well. Otherwise it keeps the current model and
-offers **Deploy anyway**. The deployed model and its scorecard are kept in
+In the recorder, **Train & deploy** trains and always sends the new model to
+the badge. It also scores the new model and the one it replaces against the
+same test recordings and shows the change. The deployed model and its scorecard are kept in
 `dist/deployed_model.py` and `dist/deployed.json`.
 
 For demos, the live chart starts without the walk, flying, throw and drop

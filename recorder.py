@@ -114,7 +114,6 @@ class Recorder:
         self.devices = {}  # address -> BLEDevice
         self.sockets = set()
         self.client = None
-        self.kept = None
         self.address = None
         # Demo: show "no model" in the UI and on the badge until the next training run.
         self.hide_model, self.reset_at = load_demo()
@@ -279,12 +278,11 @@ class Recorder:
         return self.guided
 
     def model_card(self):
-        """Scorecard of the model on the badge, plus a rejected candidate if any.
-        `unlocked` lists the guided runs the deployed model was trained after, which
+        """Scorecard of the model on the badge. `unlocked` lists the guided runs the deployed model was trained after, which
         turn on the chart colours (walk; throw + drop) and the squirrel sounds."""
         card = self.deployed_card()
         unlocked = [] if self.hide_model or card is None else card.get("unlocked", [])
-        return {"deployed": card, "kept": self.kept, "hidden": self.hide_model,
+        return {"deployed": card, "hidden": self.hide_model,
                 "unlocked": unlocked, "guided": sorted(self.guided_done())}
 
     def save_demo(self):
@@ -306,28 +304,19 @@ class Recorder:
         """Back to before any training: hide the model and start counting guided runs again."""
         self.reset_at = datetime.now().isoformat(timespec="seconds")
         self.guided = None
-        self.kept = None
         await self.set_model_hidden(True)
         log("demo reset")
 
-    async def train_and_deploy(self, force=False):
-        """Train, then deploy only if the new model scores at least as well on
-        the fixed test recordings as the one already deployed (unless forced).
-        While the model is hidden for a demo, always deploy and don't compare
-        against the hidden model."""
+    async def train_and_deploy(self):
+        """Train and deploy, scoring the new model against the one already on the
+        badge so the UI can show the change. While the model is hidden for a demo,
+        don't compare against the hidden model."""
         demo = self.hide_model
-        force = force or demo
         await self.broadcast({"type": "training"})
         baseline_path = DEPLOYED_MODEL if self.deployed_card() else None
         report = await asyncio.to_thread(trainer.train, DATA_DIR, MODEL_PATH, baseline_path)
         test = dict(report["test"] or {})
         baseline = test.pop("baseline", None)
-        if (not force and test and baseline
-                and test["accuracy"] < baseline["accuracy"]):
-            self.kept = {"test": test, "current": baseline}
-            log(f"kept deployed model: new {test['accuracy']:.0%} < current {baseline['accuracy']:.0%}")
-            await self.broadcast({"type": "trained", "deployed": None, "model": self.model_card()})
-            return
         source = MODEL_PATH.read_bytes()
         tag = await self.deploy_model(source)
         DEPLOYED_MODEL.write_bytes(source)
@@ -339,7 +328,6 @@ class Recorder:
             "windows": report["windows_per_label"],
             "unlocked": sorted(self.guided_done()),
         }, indent=2), encoding="utf-8")
-        self.kept = None
         await self.set_model_hidden(False)
         await self.broadcast({"type": "trained", "deployed": tag, "model": self.model_card()})
 
@@ -633,7 +621,7 @@ class Recorder:
         elif op == "discard":
             self.pending = None
         elif op == "train_deploy":
-            await self.train_and_deploy(bool(msg.get("force")))
+            await self.train_and_deploy()
         elif op == "reset_demo":
             await self.reset_demo()
         await self.broadcast_status()

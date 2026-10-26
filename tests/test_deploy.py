@@ -52,9 +52,9 @@ class DeployTests(unittest.TestCase):
 
 
 class GateTests(unittest.TestCase):
-    """Train & deploy keeps the badge's model when the new one scores worse."""
+    """Train & deploy always replaces the badge's model, even with a worse one."""
 
-    def run_round(self, rec, dist, new_acc, baseline_acc, force=False, data=None):
+    def run_round(self, rec, dist, new_acc, baseline_acc, data=None):
         def fake_train(_data, output, baseline):
             output.write_text(f"# model {new_acc}")
             test = {"accuracy": new_acc, "recall": {"walk": new_acc}}
@@ -75,7 +75,7 @@ class GateTests(unittest.TestCase):
                                  DEMO_STATE=dist / "demo.json",
                                  DATA_DIR=data or dist / "data"), \
                 mock.patch.object(recorder.trainer, "train", fake_train):
-            asyncio.run(rec.train_and_deploy(force))
+            asyncio.run(rec.train_and_deploy())
             return sent[-1], rec.model_card()
 
     def test_hidden_demo_model_is_always_replaced_without_comparison(self):
@@ -89,13 +89,12 @@ class GateTests(unittest.TestCase):
 
             msg, card = self.run_round(rec, dist, 0.5, 0.9)
             self.assertIsNotNone(msg["deployed"])
-            self.assertIsNone(card["kept"])
             self.assertIsNone(card["deployed"]["previous"])
             self.assertFalse(card["hidden"])
             self.assertFalse(json.loads((dist / "demo.json").read_text())["hidden"])
             self.assertEqual((dist / "deployed_model.py").read_text(), "# model 0.5")
 
-    def test_worse_model_is_kept_back_unless_forced(self):
+    def test_worse_model_is_still_deployed(self):
         with tempfile.TemporaryDirectory() as temp:
             dist = Path(temp)
             rec, badge = Recorder(), FakeBadge()
@@ -107,17 +106,11 @@ class GateTests(unittest.TestCase):
             self.assertEqual((dist / "deployed_model.py").read_text(), "# model 0.9")
 
             msg, card = self.run_round(rec, dist, 0.8, 0.9)
-            self.assertIsNone(msg["deployed"])
-            self.assertEqual(card["kept"]["test"]["accuracy"], 0.8)
-            self.assertEqual((dist / "deployed_model.py").read_text(), "# model 0.9")
-
-            msg, card = self.run_round(rec, dist, 0.8, 0.9, force=True)
             self.assertIsNotNone(msg["deployed"])
-            self.assertIsNone(card["kept"])
             self.assertEqual(card["deployed"]["previous"]["accuracy"], 0.9)
             self.assertEqual((dist / "deployed_model.py").read_text(), "# model 0.8")
 
-            # A badge running some other model gets no gate and no stale scorecard.
+            # A badge running some other model gets no stale scorecard.
             rec.info = "pedometer v1 id=2 model=beef name=OTHER"
             self.assertIsNone(rec.model_card()["deployed"])
             msg, card = self.run_round(rec, dist, 0.5, 0.9)
@@ -144,13 +137,13 @@ class UnlockTests(unittest.TestCase):
             round_ = GateTests.run_round
             self.guided(data, "a", "walk", "2026-10-25T10:00:00")
             self.guided(data, "b", "throw", "2026-10-25T10:01:00", reason="disconnected")
-            _, card = round_(self, rec, dist, 0.9, None, force=True, data=data)
+            _, card = round_(self, rec, dist, 0.9, None, data=data)
             self.assertEqual(card["unlocked"], ["walk"])
 
             self.guided(data, "c", "throw", "2026-10-25T10:02:00")
             self.guided(data, "d", "drop", "2026-10-25T10:03:00")
             rec.guided = None
-            _, card = round_(self, rec, dist, 0.9, None, force=True, data=data)
+            _, card = round_(self, rec, dist, 0.9, None, data=data)
             self.assertEqual(card["unlocked"], ["drop", "throw", "walk"])
 
             with mock.patch.multiple(recorder, DEMO_STATE=dist / "demo.json", MODEL_HIDDEN=dist / "model_hidden",
@@ -163,11 +156,11 @@ class UnlockTests(unittest.TestCase):
                 self.assertEqual(recorder.load_demo(), (True, rec.reset_at))
 
             # Runs from before the reset don't count; only a new run plus a deploy unlocks it.
-            _, card = round_(self, rec, dist, 0.9, None, force=True, data=data)
+            _, card = round_(self, rec, dist, 0.9, None, data=data)
             self.assertEqual(card["unlocked"], [])
             self.guided(data, "e", "walk", "9999-01-01T00:00:00")
             rec.guided = None
-            _, card = round_(self, rec, dist, 0.9, None, force=True, data=data)
+            _, card = round_(self, rec, dist, 0.9, None, data=data)
             self.assertEqual(card["unlocked"], ["walk"])
 
 
