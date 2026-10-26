@@ -479,11 +479,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const robot = text => ({text, pitch: 0.4, rate: 0.85});
 const QUIPS = {
   WALK: [
-    [robot("Walking detected. Recording in progress.")],
-    [robot("Performing gait analysis."), "Is that your walk? Really? Wow."],
-    ["That's the walk of someone who just merged to main on a Friday."],
+    [robot("Walking detected.")],
+    [robot("Performing gait analysis."), "Is that your walk? Wow."],
+    ["Now that's the walk of someone who just merged to main on a Friday."],
   ],
-  FIDGET: [[robot("Movement logged. Please continue.")]],
+  FIDGET: [[robot("That tickles you naughty boy")]],
   SWAY: [["Big keynote energy."]],
 };
 // Speak one or more parts in sequence; a part is text or {text, pitch, rate}.
