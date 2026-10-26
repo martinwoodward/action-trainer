@@ -229,6 +229,15 @@ little apart. Click a badge's picture on its card to hear its throw sound, or
 Shift-click it to hear its drop. Browsers only allow sound after a click on
 the page.
 
+**Ending a race:** press the space bar on the leaderboard page (the page
+swallows it, so it doesn't scroll or press a button). "Race ending in.." and a
+10-second countdown appear over the chart in an arcade font. At zero the air
+time counters stop, "X Won!" names the badge with the most air time with a
+burst of confetti, and a 2-1-3 podium with each plushie's picture stands in
+front of fireworks until you press **Reset all**. Escape cancels a countdown.
+The arcade font (Press Start 2P) comes from Google Fonts; offline, the page
+falls back to a monospace font.
+
 The page uses the light theme of [badger.github.io](https://badger.github.io/)
 (colours, fonts and card styles from its `src/styles/globals.css`). To add more
 plushies, add folders to `web/plushies/`. The server saves the known badges and
