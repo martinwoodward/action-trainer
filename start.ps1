@@ -29,8 +29,9 @@ $python = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
 $race = Join-Path $PSScriptRoot 'race'
 
 if (-not $UniverseWalkerPath) {
-    # Look for a universe-walker clone with the live dashboard next to this
-    # checkout, then next to the main checkout when running from a git worktree.
+    # Look for a clone of martinwoodward/universe-walker (its main has the live
+    # dashboard) next to this checkout, then next to the main checkout when
+    # running from a git worktree.
     $parents = @(Split-Path $PSScriptRoot -Parent)
     $commonDir = & git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir 2>$null
     if ($LASTEXITCODE -eq 0 -and $commonDir) {
@@ -46,7 +47,7 @@ if (-not $UniverseWalkerPath) {
         Select-Object -First 1
 }
 if (-not $UniverseWalkerPath -or -not (Test-Path -LiteralPath (Join-Path $UniverseWalkerPath 'dashboard\server.py'))) {
-    throw 'Could not find a universe-walker clone with dashboard\server.py. Clone it next to this repository or pass -UniverseWalkerPath.'
+    throw 'Could not find a universe-walker clone with dashboard\server.py. Clone https://github.com/martinwoodward/universe-walker next to this repository or pass -UniverseWalkerPath.'
 }
 $UniverseWalkerPath = (Resolve-Path -LiteralPath $UniverseWalkerPath).Path
 
