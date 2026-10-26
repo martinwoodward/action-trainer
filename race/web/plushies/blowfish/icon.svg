@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="40 0 940 860">
+  <defs>
+    <linearGradient id="teal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5fe0d4"/>
+      <stop offset="1" stop-color="#1fa89f"/>
+    </linearGradient>
+    <linearGradient id="fin" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2bb3a8"/>
+      <stop offset="1" stop-color="#127a73"/>
+    </linearGradient>
+    <linearGradient id="belly" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dde9e8"/>
+    </linearGradient>
+    <clipPath id="body"><ellipse cx="470" cy="430" rx="330" ry="290"/></clipPath>
+  </defs>
+  <!-- tail and top fin -->
+  <path fill="url(#fin)" d="M780 330c60-30 120-50 160-40 20 30 22 150 0 190-40 20-110 0-160-30z"/>
+  <path fill="none" stroke="#0f6a64" stroke-width="7" stroke-linecap="round" d="M810 340l100-22M812 380l112-8M812 420l110 10M806 456l96 24"/>
+  <path fill="url(#fin)" d="M400 150c-20-50-10-100 10-120 10 40 30 60 50 70 0-40 10-70 40-90 0 50 20 80 40 90 20-30 40-50 60-60-10 50 0 90 20 120z"/>
+  <!-- spikes -->
+  <g fill="#3cc4b8" stroke="#13867e" stroke-width="6" stroke-linejoin="round"><polygon points="196,324 124,250 227,277"/><polygon points="285,225 258,125 338,196"/><polygon points="592,192 670,118 646,220"/><polygon points="686,249 785,208 724,292"/><polygon points="748,333 855,331 765,385"/></g>
+  <g fill="#eef4f4" stroke="#a9c2c1" stroke-width="6" stroke-linejoin="round"><polygon points="768,457 876,508 755,510"/><polygon points="735,552 814,640 700,597"/><polygon points="663,629 702,741 611,660"/><polygon points="563,677 556,797 501,689"/><polygon points="449,689 398,799 387,680"/><polygon points="338,664 250,748 285,635"/><polygon points="247,604 134,650 210,560"/><polygon points="188,519 67,521 173,466"/></g>
+  <!-- body -->
+  <g clip-path="url(#body)">
+    <rect x="100" y="100" width="760" height="700" fill="url(#belly)"/>
+    <path fill="url(#teal)" d="M100 100h760v330c-100-20-170 40-260 50-110 12-180-40-280-40-90 0-140 30-220 50z"/>
+    <path fill="#ffffff" opacity="0.18" d="M100 100h760v80c-200-40-520-40-760 30z"/>
+  </g>
+  <ellipse cx="470" cy="430" rx="330" ry="290" fill="none" stroke="#13867e" stroke-width="7" opacity="0.6"/>
+  <!-- belly and back marks -->
+  <g fill="none" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <g stroke="#9fb3b2"><path d="M262 520l14 32 30-16M360 580l10 34 22-28M520 560l18 32 14-34M610 620l12 30 22-26M450 650l10 30 20-26M660 530l34 16-30 14"/></g>
+    <g stroke="#13867e"><path d="M330 220l18-30 14 34M430 210l12-34 18 32M560 196l20-28 8 34M210 400l-22 22 26 18M720 380l34 6-28 22"/></g>
+  </g>
+  <!-- face -->
+  <g stroke="#13867e" stroke-width="7">
+    <circle cx="245" cy="300" r="82" fill="#fff"/>
+    <circle cx="610" cy="310" r="82" fill="#fff"/>
+  </g>
+  <ellipse cx="282" cy="300" rx="43" ry="58" fill="#111"/>
+  <ellipse cx="572" cy="310" rx="43" ry="58" fill="#111"/>
+  <circle cx="296" cy="275" r="11" fill="#fff"/>
+  <circle cx="586" cy="285" r="11" fill="#fff"/>
+  <path fill="none" stroke="#13867e" stroke-width="7" stroke-linecap="round" d="M335 330c26 28 26 64 0 88M507 340c-26 28-26 64 0 88"/>
+  <path fill="#fff" d="M350 350c40 12 80 12 120 0 18 40 2 76-60 76s-78-36-60-76z"/>
+  <path fill="#d9566b" d="M380 380c20 10 40 10 60 0 0 22-14 30-30 30s-30-8-30-30z"/>
+</svg>
