@@ -447,11 +447,11 @@ const GUIDES = {
     stop(),
     ["still", "Stand still", "Don't move.", 4, "STILL"],
   ],
-  throw: [ready("Hold it, ready to throw."), ...Array.from({length: 5}, () => [
+  throw: [ready("Hold it, ready to throw."), ...Array.from({length: 3}, () => [
     ["throw", "Throw it", "Toss it up and catch it.", 3, "THROW"],
     ["unknown", "Hold it", "Hold it in your hand.", 3, "HOLD"],
   ]).flat(), ["still", "Set it down", "Leave it still.", 4, "STILL"]],
-  drop: [ready("Hold it out over something soft."), ...Array.from({length: 5}, () => [
+  drop: [ready("Hold it out over something soft."), ...Array.from({length: 3}, () => [
     ["drop", "Drop it", "Let it fall onto something soft.", 3, "DROP"],
     ["unknown", "Pick it up", "Pick it up and hold it out again.", 4, "PICKUP"],
   ]).flat(), ["still", "Leave it still", "Don't touch it.", 4, "STILL"]],
