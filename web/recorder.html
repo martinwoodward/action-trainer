@@ -442,7 +442,8 @@ $("startstop").onclick = () => {
 };
 
 // --- Guided training: timed prompts, tagged from whichever prompt was showing. ---
-// [label (null = not trained), what to say, hint, seconds, short cue for the badge screen]
+// [label (null = not trained), what to say, hint, seconds, short cue for the badge screen,
+//  optional spoken text when it differs from the text shown]
 const ready = (hint, secs = 3) => [null, "Get ready", hint, secs, "READY"];
 // Untagged pause between actions: switching takes ~2 s and would muddy both labels.
 const stop = () => [null, "Stop", "Stand still for a moment.", 2, "STOP"];
@@ -462,12 +463,12 @@ const GUIDES = {
     stop(),
     ["still", "Stand still", "Don't move.", 4, "STILL"],
   ],
-  throw: [ready("Hold it, ready to throw."), ...Array.from({length: 3}, () => [
-    ["throw", "Bop it", "Toss it up and catch it.", 3, "THROW"],
+  throw: [ready("Hold it, ready to throw."), ...Array.from({length: 3}, (_, n) => [
+    ["throw", "Throw it", "Toss it up and catch it.", 3, "THROW", n === 1 ? "Bop it" : undefined],
     ["unknown", "Hold it", "Hold it in your hand.", 3, "HOLD"],
   ]).flat(), ["still", "Set it down", "Leave it still.", 4, "STILL"]],
-  drop: [ready("Hold it out over something soft."), ...Array.from({length: 3}, () => [
-    ["drop", "Drop it", "Let it fall onto something soft.", 3, "DROP"],
+  drop: [ready("Hold it out over something soft."), ...Array.from({length: 3}, (_, n) => [
+    ["drop", "Drop it", "Let it fall onto something soft.", 3, "DROP", n === 2 ? "Drop it like it's hot" : undefined],
     ["unknown", "Pick it up", "Pick it up and hold it out again.", 4, "PICKUP"],
   ]).flat(), ["still", "Leave it still", "Don't touch it.", 4, "STILL"]],
 };
@@ -588,10 +589,10 @@ async function runGuide(kind) {
   log(`guided ${kind} run`);
   for (let i = 0; i < me.steps.length; i++) {
     if (guide !== me) return;
-    const [label, say, , secs, cue] = me.steps[i];
+    const [label, say, , secs, cue, spoken] = me.steps[i];
     me.i = i; me.endsAt = performance.now() + secs * 1000;
     send({op: "phase", label, cue, ms: secs * 1000});
-    speak(say);
+    speak(spoken ?? say);
     render();
     let quipAt = secs >= 6 && quips[cue]?.length ? me.endsAt - secs * 600 : Infinity;
     let quipChimeAt = quipAt - CHIME_LEAD_MS;
