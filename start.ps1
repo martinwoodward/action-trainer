@@ -1,10 +1,43 @@
 [CmdletBinding()]
 param(
     [string]$UniverseWalkerPath = $env:UNIVERSE_WALKER_PATH,
-    [switch]$CreateShortcut
+    [switch]$CreateShortcut,
+    [switch]$ShowTaskbar
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Same as Settings > Personalization > Taskbar > "Automatically hide the taskbar".
+# Applies straight away for the current user; Windows remembers it.
+function Set-TaskbarAutoHide {
+    param([bool]$Enabled)
+
+    if (-not ('ActionTrainer.Taskbar' -as [type])) {
+        Add-Type -Namespace ActionTrainer -Name Taskbar -MemberDefinition @'
+[StructLayout(LayoutKind.Sequential)]
+public struct APPBARDATA {
+    public uint cbSize; public IntPtr hWnd; public uint uCallbackMessage; public uint uEdge;
+    public int left, top, right, bottom; public IntPtr lParam;
+}
+[DllImport("shell32.dll")] public static extern UIntPtr SHAppBarMessage(uint msg, ref APPBARDATA data);
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string name);
+'@
+    }
+    $ABM_GETSTATE = 4; $ABM_SETSTATE = 10; $ABS_AUTOHIDE = 1
+    $data = New-Object ActionTrainer.Taskbar+APPBARDATA
+    $data.cbSize = [Runtime.InteropServices.Marshal]::SizeOf($data)
+    $data.hWnd = [ActionTrainer.Taskbar]::FindWindow('Shell_TrayWnd', $null)
+    $state = [int][ActionTrainer.Taskbar]::SHAppBarMessage($ABM_GETSTATE, [ref]$data).ToUInt32()
+    $state = if ($Enabled) { $state -bor $ABS_AUTOHIDE } else { $state -band -bnot $ABS_AUTOHIDE }
+    $data.lParam = [IntPtr]$state
+    [ActionTrainer.Taskbar]::SHAppBarMessage($ABM_SETSTATE, [ref]$data) | Out-Null
+}
+
+if ($ShowTaskbar) {
+    Set-TaskbarAutoHide $false
+    Write-Host 'Taskbar auto-hide turned off.'
+    return
+}
 
 if ($CreateShortcut) {
     $shell = New-Object -ComObject WScript.Shell
@@ -123,6 +156,13 @@ foreach ($server in $servers) {
 }
 
 # Open the pages once every server is up, in presentation order.
+try {
+    Set-TaskbarAutoHide $true
+    Write-Host 'Taskbar set to auto-hide. Run .\start.ps1 -ShowTaskbar to undo.'
+}
+catch {
+    Write-Warning "Could not auto-hide the taskbar: $($_.Exception.Message)"
+}
 $pages = @(
     'https://badger.github.io/simulator/'
     'http://localhost:8765/'

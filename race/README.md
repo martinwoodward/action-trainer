@@ -52,6 +52,16 @@ Once all three are up, it opens the browser in this order: the
 [badge simulator](https://badger.github.io/simulator/), Action Trainer,
 the Universe Walker dashboard (`http://localhost:8767/dashboard/`) and the
 leaderboard.
+
+The launcher also turns on **Automatically hide the taskbar** (the same
+Windows setting as in Settings > Personalization > Taskbar) just before it
+opens the pages. Windows keeps the setting after the launcher exits; to turn it
+back off, run:
+
+```powershell
+.\start.ps1 -ShowTaskbar
+```
+
 For Race-specific recording and training, use the commands below instead.
 
 ## Record
