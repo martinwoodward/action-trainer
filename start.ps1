@@ -120,7 +120,17 @@ foreach ($server in $servers) {
         }
         Write-Host "$($server.Title) started at $url (PID $($process.Id))"
     }
-    Start-Process $url
+}
+
+# Open the pages once every server is up, in presentation order.
+$pages = @(
+    'https://badger.github.io/simulator/'
+    'http://localhost:8765/'
+    'http://localhost:8767/dashboard/'
+    'http://localhost:8766/'
+)
+foreach ($page in $pages) {
+    Start-Process $page
 }
 
 Write-Host 'Leave the server consoles open. Press Ctrl+C in each console to stop it.'
