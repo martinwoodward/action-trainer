@@ -48,6 +48,10 @@ clone of [martinwoodward/universe-walker](https://github.com/martinwoodward/univ
 (`main`) next to this repository, named `universe-walker` or
 `martinwoodward_universe-walker` (or pass `-UniverseWalkerPath`/`$env:UNIVERSE_WALKER_PATH`),
 at `http://127.0.0.1:8767/`; it uses port 8767 because the recorder has 8765.
+Once all three are up, it opens the browser in this order: the
+[badge simulator](https://badger.github.io/simulator/), Action Trainer,
+the Universe Walker dashboard (`http://localhost:8767/dashboard/`) and the
+leaderboard.
 For Race-specific recording and training, use the commands below instead.
 
 ## Record
