@@ -174,6 +174,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 const colourOf = {};     // badge_id -> its colour, picked by the server so no two badges share one
 let badges = [], ws;
+let realBadges = [];     // the latest badges from the server; badges also holds simulated ones
 
 // GitHub Octocat (Mona): Primer Octicons mark-github-24 (MIT, github.com/primer/octicons).
 const OCTOCAT_LOGO = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="#101411"><path d="M10.226 17.284c-2.965-.36-5.054-2.493-5.054-5.256 0-1.123.404-2.336 1.078-3.144-.292-.741-.247-2.314.09-2.965.898-.112 2.111.36 2.83 1.01.853-.269 1.752-.404 2.853-.404 1.1 0 1.999.135 2.807.382.696-.629 1.932-1.1 2.83-.988.315.606.36 2.179.067 2.942.72.854 1.101 2 1.101 3.167 0 2.763-2.089 4.852-5.098 5.234.763.494 1.28 1.572 1.28 2.807v2.336c0 .674.561 1.056 1.235.786 4.066-1.55 7.255-5.615 7.255-10.646C23.5 6.188 18.334 1 11.978 1 5.62 1 .5 6.188.5 12.545c0 4.986 3.167 9.12 7.435 10.669.606.225 1.19-.18 1.19-.786V20.63a2.9 2.9 0 0 1-1.078.224c-1.483 0-2.359-.808-2.987-2.313-.247-.607-.517-.966-1.034-1.033-.27-.023-.359-.135-.359-.27 0-.27.45-.471.898-.471.652 0 1.213.404 1.797 1.235.45.651.921.943 1.483.943.561 0 .92-.202 1.437-.719.382-.381.674-.718.944-.943"/></svg>`;
@@ -213,7 +214,7 @@ const badgeIcon = name => {
 fetch("/plushies/manifest.json").then(r => r.json()).then(m => {
   plushies = m;
   if (audio) preload();
-  if (badges.length) render({badges});
+  if (badges.length) refresh();
 }).catch(() => {});
 
 function fmt(ms) {
@@ -260,8 +261,8 @@ function card(b) {
   el.querySelector(".flying").hidden = !(b.online && b.state === "throw");
   setText(el.querySelector("[data-air]"), air);
   setText(el.querySelector(".since"), `${since} · ${seen}`);
-  el.querySelector("[data-identify]").disabled = !b.online;
-  el.querySelector("[data-rename]").disabled = !b.online;
+  el.querySelector("[data-identify]").disabled = !b.online || !!b.sim;
+  el.querySelector("[data-rename]").disabled = !b.online || !!b.sim;
   el.querySelector("[data-id]").disabled = !b.totals;
   return el;
 }
@@ -389,8 +390,73 @@ function render(status) {
   els.forEach((el, i) => { if (grid.children[i] !== el) grid.insertBefore(el, grid.children[i] || null); });
   $("empty").hidden = here.length > 0;
   const online = here.filter(b => b.online).length;
-  $("conn").textContent = `${online} online · ${here.length} seen`;
+  const simN = here.filter(b => b.sim).length;
+  $("conn").textContent = `${online} online · ${here.length} seen` +
+    (simN ? ` · ${simN} simulated${sim && sim.running ? ", racing" : ""}` : "");
 }
+// Real badges from the server plus any simulated plushies.
+const refresh = () => render({badges: sim ? realBadges.concat(simBadges()) : realBadges});
+
+// Test mode. After a reset, S loads one simulated badge per plushie folder; Enter
+// sets them racing with random, frenetic flights, alongside any real badges, until
+// the race's winner is declared. Reset all removes them. Client-side only.
+const SIM_TICK_MS = 50;
+const PALETTE = ["#0FBF3E", "#8534F3", "#FE4C25", "#3094FF", "#DB9D00", "#08872B", "#43179E", "#C53211",
+  "#0527FC", "#D67200", "#5FED83", "#B870FF", "#F08A3A", "#1A61FE", "#D8BD0E", "#8CF2A6", "#C898FD", "#F4A876"];
+let sim = null;          // {running, list: [{b, skill, until, drop}]}
+const simBadges = () => sim.list.map(s => s.b);
+function loadSim() {
+  if (race) return;
+  const names = Object.keys(plushies).filter(k => k !== "default");
+  const now = Date.now();
+  sim = {running: false, list: names.map((n, i) => ({
+    skill: 0.6 + Math.random() * 0.8, until: 0, drop: false,
+    b: {badge_id: (0x51a00000 + i).toString(16), name: n[0].toUpperCase() + n.slice(1), sim: true,
+      colour: PALETTE[i % PALETTE.length], state: "still", boot: 1, drops: 0, rssi: -40, age: 0, seen: now,
+      online: true, totals: {still: 0, throw: 0, drop: 0}, lifetime: null, reset: false},
+  }))};
+  refresh();
+}
+function runSim() {
+  if (race && race.phase === "won") return;
+  if (!sim) loadSim();
+  if (!sim || sim.running) return;
+  sim.running = true;
+  const now = Date.now();
+  for (const s of sim.list) { s.until = now + Math.random() * 600; s.b.seen = now; }
+  refresh();
+}
+function stopSim() {
+  if (!sim) return;
+  sim.running = false;
+  for (const s of sim.list) { s.b.state = "still"; s.b.seen = Date.now(); }
+}
+function clearSim() {
+  if (!sim) return;
+  for (const s of sim.list) endThrow(s.b.badge_id, true);
+  sim = null;
+  refresh();
+}
+setInterval(() => {
+  if (!sim) return;
+  const now = Date.now();
+  for (const s of sim.list) {
+    const b = s.b, dt = now - b.seen;
+    b.seen = now;
+    if (!sim.running) continue;
+    if (b.state === "throw") b.totals.throw += dt; else b.totals[b.state] += dt;
+    if (now < s.until) continue;
+    if (b.state === "throw") {
+      // Land: usually caught, sometimes dropped (UGF).
+      if (Math.random() < 0.12) { b.state = "drop"; b.drops++; s.until = now + 300 + Math.random() * 500; }
+      else { b.state = "still"; s.until = now + (100 + Math.random() * 900) / s.skill; }
+    } else {
+      b.state = "throw";
+      s.until = now + (150 + Math.random() * 1300) * s.skill;
+    }
+  }
+  refresh();
+}, SIM_TICK_MS);
 
 // Bars ease to their new slot when the order changes, and to their new height.
 const SWAP_MS = 600;
@@ -418,7 +484,7 @@ function draw() {
   // Largest to smallest, top down; ties keep a stable order. A badge joins the
   // chart once it has air time since the last reset.
   const shown = badges.filter(b => b.totals && present(b)).map(b => ({b, air: liveAir(b, now)}))
-    .filter(s => s.air > 0)
+    .filter(s => s.air > 0 || s.b.sim)
     .sort((p, q) => q.air - p.air || p.b.name.localeCompare(q.b.name) || p.b.badge_id.localeCompare(q.b.badge_id));
   const T = 40, B = 16, ph = H - T - B;
   // Bars fill about 60% of their row, so a few badges get fat bars with a
@@ -528,6 +594,7 @@ function startRace() {
   requestAnimationFrame(raceFrame);
 }
 function endRace() {
+  stopSim();
   const now = Date.now(), order = standings(now);
   frozen = {};
   for (const b of badges) if (b.totals) frozen[b.badge_id] = liveAir(b, now);
@@ -652,8 +719,11 @@ function drawEffects(now) {
 const typing = e => e.target.closest && e.target.closest("input, textarea, select, [contenteditable]");
 document.addEventListener("keydown", e => {
   if (e.key === "Escape" && race && race.phase === "countdown") { resetRace(); return; }
+  if (typing(e) || dlg.open || e.ctrlKey || e.metaKey || e.altKey) return;
+  // Test mode: S loads the simulated plushies, Enter (or keypad Enter) races them.
+  if (e.key === "s" || e.key === "S") { e.preventDefault(); if (!e.repeat) loadSim(); return; }
+  if (e.key === "Enter") { e.preventDefault(); if (!e.repeat) runSim(); return; }
   if (e.code !== "Space" && e.key !== " ") return;
-  if (typing(e) || dlg.open) return;
   e.preventDefault();
   if (!e.repeat) startRace();
 }, true);
@@ -663,14 +733,16 @@ function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onmessage = e => {
     const m = JSON.parse(e.data);
-    if (m.type === "status") render(m);
+    if (m.type === "status") { realBadges = m.badges; refresh(); }
   };
   ws.onclose = () => { $("conn").textContent = "server disconnected, retrying…"; setTimeout(connect, 1000); };
 }
 const send = msg => ws && ws.readyState === 1 && ws.send(JSON.stringify(msg));
 $("grid").onclick = e => {
   const b = e.target.closest("button[data-id]");
-  if (b) send({op: "reset", badge_id: b.dataset.id});
+  const simmed = b && sim && sim.list.find(s => s.b.badge_id === b.dataset.id);
+  if (simmed) { simmed.b.totals = {still: 0, throw: 0, drop: 0}; refresh(); }
+  else if (b) send({op: "reset", badge_id: b.dataset.id});
   const f = e.target.closest("button[data-identify]");
   if (f) send({op: "identify", badge_id: f.dataset.identify});
   const r = e.target.closest("button[data-rename]");
@@ -686,7 +758,7 @@ $("sound").onclick = () => {
 // Browsers start audio suspended until the page is clicked.
 document.addEventListener("pointerdown", () => { if (soundOn) ctx(); });
 showSound();
-$("resetall").onclick = () => { resetRace(); send({op: "reset_all"}); };
+$("resetall").onclick = () => { resetRace(); clearSim(); send({op: "reset_all"}); };
 // Rename dialog.
 const dlg = $("rename");
 function openRename(id) {

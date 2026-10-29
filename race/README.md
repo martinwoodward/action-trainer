@@ -252,6 +252,14 @@ front of fireworks until you press **Reset all**. Escape cancels a countdown.
 The arcade font (Press Start 2P) comes from Google Fonts; offline, the page
 falls back to a monospace font.
 
+**Simulated race (test mode):** after **Reset all**, press **S** to load one
+simulated badge for every plushie in `web/plushies/` (except `default`), then
+**Enter** (or keypad Enter) to set them racing with random, fast flights and
+the odd drop. They race alongside any real badges, so press space as usual to
+end the race; the simulation stops when the winner is declared, and **Reset
+all** removes the simulated badges. This runs only in the page: the server and
+real badges never see it.
+
 The page uses the light theme of [badger.github.io](https://badger.github.io/)
 (colours, fonts and card styles from its `src/styles/globals.css`). To add more
 plushies, add folders to `web/plushies/`. The server saves the known badges and
