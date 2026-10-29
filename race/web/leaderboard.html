@@ -228,8 +228,8 @@ function fmt(ms) {
 // real time until the next report replaces the estimate. Once a race ends, the
 // counters hold the values they had at the whistle until Reset all.
 let frozen = null;       // badge_id -> air ms at the end of the race
-const extra = (b, now) => !frozen && b && b.online && b.state === "throw" && b.totals ? Math.min(Math.max(0, now - b.seen), LIVE_MAX_MS) : 0;
-const liveAir = (b, now) => frozen ? frozen[b.badge_id] || 0 : b.totals.throw + extra(b, now);
+const extra = (b, now) => !frozen && b && !b.sim && b.online && b.state === "throw" && b.totals ? Math.min(Math.max(0, now - b.seen), LIVE_MAX_MS) : 0;
+const liveAir = (b, now) => frozen ? frozen[b.badge_id] || 0 : b.totals.throw + extra(b, now) + simAir(b.badge_id);
 
 // One card element per badge, built once and then updated in place, so its
 // buttons keep their hover state and clicks while statuses stream in.
@@ -258,7 +258,7 @@ function card(b) {
   setHTML(pic, badgeIcon(b.name));
   pic.title = `Play ${b.name}'s sound (Shift-click: its drop sound)`;
   setText(el.querySelector(".nm"), b.name);
-  el.querySelector(".flying").hidden = !(b.online && b.state === "throw");
+  el.querySelector(".flying").hidden = !(b.online && (b.state === "throw" || simFlying(b.badge_id)));
   setText(el.querySelector("[data-air]"), air);
   setText(el.querySelector(".since"), `${since} · ${seen}`);
   el.querySelector("[data-identify]").disabled = !b.online || !!b.sim;
@@ -392,68 +392,71 @@ function render(status) {
   const online = here.filter(b => b.online).length;
   const simN = here.filter(b => b.sim).length;
   $("conn").textContent = `${online} online · ${here.length} seen` +
-    (simN ? ` · ${simN} simulated${sim && sim.running ? ", racing" : ""}` : "");
+    (simN ? ` · ${simN} simulated` : "") + (simRacing ? " · simulated race" : "");
 }
 // Real badges from the server plus any simulated plushies.
-const refresh = () => render({badges: sim ? realBadges.concat(simBadges()) : realBadges});
+const refresh = () => render({badges: realBadges.concat(simList)});
 
-// Test mode. After a reset, S loads one simulated badge per plushie folder; Enter
-// sets them racing with random, frenetic flights, alongside any real badges, until
-// the race's winner is declared. Reset all removes them. Client-side only.
+// Test mode, client-side only. Enter races every badge on the board with random,
+// frenetic simulated flights, added on top of any real air time, until the race's
+// winner is declared. S (before or during a race) adds one simulated badge per
+// plushie folder, which joins in if a race is running. Reset all removes it all.
 const SIM_TICK_MS = 50;
 const PALETTE = ["#0FBF3E", "#8534F3", "#FE4C25", "#3094FF", "#DB9D00", "#08872B", "#43179E", "#C53211",
   "#0527FC", "#D67200", "#5FED83", "#B870FF", "#F08A3A", "#1A61FE", "#D8BD0E", "#8CF2A6", "#C898FD", "#F4A876"];
-let sim = null;          // {running, list: [{b, skill, until, drop}]}
-const simBadges = () => sim.list.map(s => s.b);
-function loadSim() {
-  if (race) return;
-  const names = Object.keys(plushies).filter(k => k !== "default");
-  const now = Date.now();
-  sim = {running: false, list: names.map((n, i) => ({
-    skill: 0.6 + Math.random() * 0.8, until: 0, drop: false,
-    b: {badge_id: (0x51a00000 + i).toString(16), name: n[0].toUpperCase() + n.slice(1), sim: true,
+let simList = [];        // simulated badges added with S
+let runners = {};        // badge_id -> {skill, until, state, air}: simulated flights
+let simRacing = false, lastSim = 0;
+const simAir = id => runners[id] ? runners[id].air : 0;
+const simFlying = id => !!runners[id] && runners[id].state === "throw";
+function addPlushies() {
+  if (race && race.phase === "won") return;
+  const now = Date.now(), have = new Set(simList.map(b => b.plushie));
+  Object.keys(plushies).filter(k => k !== "default" && !have.has(k)).forEach(n => {
+    const i = simList.length;
+    simList.push({badge_id: (0x51a00000 + i).toString(16), name: n[0].toUpperCase() + n.slice(1), sim: true, plushie: n,
       colour: PALETTE[i % PALETTE.length], state: "still", boot: 1, drops: 0, rssi: -40, age: 0, seen: now,
-      online: true, totals: {still: 0, throw: 0, drop: 0}, lifetime: null, reset: false},
-  }))};
+      online: true, totals: {still: 0, throw: 0, drop: 0}, lifetime: null, reset: false});
+  });
   refresh();
 }
 function runSim() {
-  if (race && race.phase === "won") return;
-  if (!sim) loadSim();
-  if (!sim || sim.running) return;
-  sim.running = true;
-  const now = Date.now();
-  for (const s of sim.list) { s.until = now + Math.random() * 600; s.b.seen = now; }
+  if (simRacing || (race && race.phase === "won")) return;
+  simRacing = true; lastSim = Date.now();
   refresh();
 }
 function stopSim() {
-  if (!sim) return;
-  sim.running = false;
-  for (const s of sim.list) { s.b.state = "still"; s.b.seen = Date.now(); }
+  simRacing = false;
+  for (const r of Object.values(runners)) r.state = "still";
+  for (const b of simList) b.state = "still";
 }
 function clearSim() {
-  if (!sim) return;
-  for (const s of sim.list) endThrow(s.b.badge_id, true);
-  sim = null;
+  for (const id in runners) endThrow(id, true);
+  simList = []; runners = {}; simRacing = false;
   refresh();
 }
 setInterval(() => {
-  if (!sim) return;
-  const now = Date.now();
-  for (const s of sim.list) {
-    const b = s.b, dt = now - b.seen;
-    b.seen = now;
-    if (!sim.running) continue;
-    if (b.state === "throw") b.totals.throw += dt; else b.totals[b.state] += dt;
-    if (now < s.until) continue;
-    if (b.state === "throw") {
-      // Land: usually caught, sometimes dropped (UGF).
-      if (Math.random() < 0.12) { b.state = "drop"; b.drops++; s.until = now + 300 + Math.random() * 500; }
-      else { b.state = "still"; s.until = now + (100 + Math.random() * 900) / s.skill; }
-    } else {
-      b.state = "throw";
-      s.until = now + (150 + Math.random() * 1300) * s.skill;
+  if (!simRacing) return;
+  const now = Date.now(), dt = now - lastSim;
+  lastSim = now;
+  // Everyone on the board races, including badges that turn up mid-race.
+  for (const b of badges.filter(b => b.totals && present(b) && b.online)) {
+    const r = runners[b.badge_id] = runners[b.badge_id] ||
+      {skill: 0.6 + Math.random() * 0.8, until: now + Math.random() * 600, state: "still", air: 0};
+    if (r.state === "throw") r.air += dt;
+    if (now >= r.until) {
+      if (r.state === "throw") {
+        // Land: usually caught, sometimes dropped (UGF).
+        if (Math.random() < 0.12) { r.state = "drop"; r.until = now + 300 + Math.random() * 500; if (b.sim) b.drops++; else oof(b); }
+        else { r.state = "still"; r.until = now + (100 + Math.random() * 900) / r.skill; }
+        if (!b.sim) endThrow(b.badge_id);
+      } else {
+        r.state = "throw";
+        r.until = now + (150 + Math.random() * 1300) * r.skill;
+        if (!b.sim && soundOn) startThrow(b);
+      }
     }
+    if (b.sim) { b.state = r.state; b.seen = now; }
   }
   refresh();
 }, SIM_TICK_MS);
@@ -720,8 +723,8 @@ const typing = e => e.target.closest && e.target.closest("input, textarea, selec
 document.addEventListener("keydown", e => {
   if (e.key === "Escape" && race && race.phase === "countdown") { resetRace(); return; }
   if (typing(e) || dlg.open || e.ctrlKey || e.metaKey || e.altKey) return;
-  // Test mode: S loads the simulated plushies, Enter (or keypad Enter) races them.
-  if (e.key === "s" || e.key === "S") { e.preventDefault(); if (!e.repeat) loadSim(); return; }
+  // Test mode: S adds the simulated plushies, Enter (or keypad Enter) races the board.
+  if (e.key === "s" || e.key === "S") { e.preventDefault(); if (!e.repeat) addPlushies(); return; }
   if (e.key === "Enter") { e.preventDefault(); if (!e.repeat) runSim(); return; }
   if (e.code !== "Space" && e.key !== " ") return;
   e.preventDefault();
@@ -740,9 +743,9 @@ function connect() {
 const send = msg => ws && ws.readyState === 1 && ws.send(JSON.stringify(msg));
 $("grid").onclick = e => {
   const b = e.target.closest("button[data-id]");
-  const simmed = b && sim && sim.list.find(s => s.b.badge_id === b.dataset.id);
-  if (simmed) { simmed.b.totals = {still: 0, throw: 0, drop: 0}; refresh(); }
-  else if (b) send({op: "reset", badge_id: b.dataset.id});
+  if (b && runners[b.dataset.id]) runners[b.dataset.id].air = 0;
+  if (b && !simList.some(x => x.badge_id === b.dataset.id)) send({op: "reset", badge_id: b.dataset.id});
+  else if (b) refresh();
   const f = e.target.closest("button[data-identify]");
   if (f) send({op: "identify", badge_id: f.dataset.identify});
   const r = e.target.closest("button[data-rename]");
