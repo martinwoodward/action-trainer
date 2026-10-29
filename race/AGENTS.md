@@ -39,7 +39,10 @@ into Race). Deploy both with `tools/deploy_race.py` (`kiosk`, `app` or
   from the top, with animated swaps. Space (swallowed by the page) runs a 10 s
   "Race ending in.." countdown; at zero the page freezes the counters and shows
   the winner, a 2-1-3 podium, confetti and fireworks until Reset all. This is
-  client-side only. The badge counts the
+  client-side only. Test mode, also client-side: Enter races every badge on the
+  board with simulated flights (added to real air time) until the winner is
+  declared, S adds a simulated badge per plushie folder before or during a
+  race, and Reset all removes them. The badge counts the
   ms per state and sends lifetime totals (saved in `/state`, never reset;
   64-bit ms, 32-bit counts) in each status. The server acks badges
   (so they switch from broadcast to unicast) and sends commands: rename,
